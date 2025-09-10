@@ -52,7 +52,7 @@ folder_names = [
     "test/srt",
 ]
 
-private_repo = "your-org/sglang-private-repo"
+private_repo = "togethercomputer/tgl"
 # --- Configuration End ---
 
 
