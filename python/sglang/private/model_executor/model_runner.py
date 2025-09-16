@@ -1,12 +1,28 @@
 import logging
 
+import torch
+
 from sglang.srt.model_executor.model_runner import ModelRunner as SGLANG_ModelRunner
+from sglang.srt.model_executor.model_runner import (
+    cpu_has_amx_support,
+    is_fa3_default_architecture,
+    is_flashinfer_available,
+    is_hip,
+    is_hopper_with_cuda_12_3,
+    is_no_spec_infer_or_topk_one,
+    is_npu,
+    is_sm100_supported,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class ModelRunner(SGLANG_ModelRunner):
+_is_hip = is_hip()
+_is_npu = is_npu()
+_is_cpu_amx_available = cpu_has_amx_support()
 
+
+class ModelRunner(SGLANG_ModelRunner):
     def model_specific_adjustment(self):
         server_args = self.server_args
 

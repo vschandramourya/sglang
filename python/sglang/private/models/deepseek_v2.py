@@ -1,18 +1,43 @@
 import torch
 
+from sglang.srt.layers.dp_attention import is_dp_attention_enabled
+from sglang.srt.layers.quantization import deep_gemm_wrapper
+from sglang.srt.layers.quantization.fp8_kernel import (
+    per_tensor_quant_mla_fp8,
+    per_token_group_quant_mla_deep_gemm_masked_fp8,
+)
 from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.models.deepseek_v2 import AttnForwardMethod
 from sglang.srt.models.deepseek_v2 import (
     DeepseekV2AttentionMLA as SGLANG_DeepseekV2AttentionMLA,
 )
-from sglang.srt.utils import is_hip, use_intel_amx_backend
+from sglang.srt.utils import (
+    get_bool_env_var,
+    is_cuda,
+    is_gfx95_supported,
+    is_hip,
+    use_intel_amx_backend,
+)
 
 _is_hip = is_hip()
+_use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
+_is_gfx95_supported = is_gfx95_supported()
+_use_aiter_gfx95 = _use_aiter and _is_gfx95_supported
+_is_cuda = is_cuda()
+
+if _use_aiter_gfx95:
+    from sglang.srt.layers.quantization.rocm_mxfp4_utils import (
+        batched_gemm_afp4wfp4_pre_quant,
+        fused_flatten_mxfp4_quant,
+    )
+    from sglang.srt.layers.rocm_linear_utils import fused_qk_rope_cat
+
+if _is_cuda:
+    from sgl_kernel import bmm_fp8
 
 
 class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
-
     def dispatch_attn_forward_method(
         self, forward_batch: ForwardBatch
     ) -> AttnForwardMethod:
