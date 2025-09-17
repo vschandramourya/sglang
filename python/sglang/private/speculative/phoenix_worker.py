@@ -468,8 +468,7 @@ class PhoenixWorker(TpModelWorker):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids, seq_lens_cpu
                 )
-            return logits_output, next_token_ids, bid, 0, False
-            # return logits_output, next_token_ids, bid, 0, False, []  # Add empty acceptance lengths for extend mode
+            return logits_output, next_token_ids, bid, 0, False, []  # Add empty acceptance lengths
         else:
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 spec_info = self.draft(batch)
@@ -493,7 +492,7 @@ class PhoenixWorker(TpModelWorker):
                 model_worker_batch.bid,
                 sum(verify_output.accept_length_per_req_cpu),
                 can_run_cuda_graph,
-                # verify_output.accept_length_per_req_cpu,  # Add per-request acceptance lengths
+                verify_output.accept_length_per_req_cpu,  # Add per-request acceptance lengths to bulid the suffix tree
             )
 
     def check_forward_draft_extend_after_decode(self, batch: ScheduleBatch):

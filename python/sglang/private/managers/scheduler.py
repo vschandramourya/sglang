@@ -32,7 +32,7 @@ from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.disaggregation.utils import DisaggregationMode
 from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.constrained.base_grammar_backend import create_grammar_backend
-from sglang.srt.distributed import get_pp_group, get_world_group
+from sglang.srt.distributed import get_pp_group, get_world_group, get_tensor_model_parallel_rank
 from sglang.srt.utils import configure_gc_logger, get_bool_env_var
 from sglang.utils import TypeBasedDispatcher
 from sglang.global_config import global_config
@@ -491,8 +491,11 @@ class Scheduler(SGLANG_Scheduler):
                     bid,
                     num_accepted_tokens,
                     can_run_cuda_graph,
-                    # accept_length_per_req_cpu,
+                    accept_length_per_req_cpu,
                 ) = self.draft_worker.forward_batch_speculative_generation(batch)
+                # handle suffix tree update
+                if self.server_args.enable_suffix_decoding and get_tensor_model_parallel_rank() == 0 and (self.pp_group.world_size == 1 or self.pp_group.is_last_rank):
+                    self.tp_worker.model_runner.update_suffix_cache_from_scheduler(batch, next_token_ids, accept_length_per_req_cpu)
                 bs = batch.batch_size()
                 self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
                 self.spec_num_total_forward_ct += bs
