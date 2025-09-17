@@ -30,7 +30,7 @@ from sglang.srt.server_args import ServerArgs
 from sglang.srt.speculative.build_eagle_tree import build_tree_kernel_efficient
 from sglang.private.speculative.phoenix_draft_cuda_graph_runner import PhoenixDraftCudaGraphRunner
 from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import PhoenixDraftExtendCudaGraphRunner
-from sglang.private.speculative.eagle_utils import EagleVerifyInput
+from sglang.srt.speculative.eagle_utils import EagleVerifyInput
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
     EagleVerifyOutput,
