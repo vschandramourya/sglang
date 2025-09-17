@@ -101,6 +101,13 @@ class Scheduler(SGLANG_Scheduler):
         self.pp_size = server_args.pp_size
         self.dp_size = server_args.dp_size
         self.schedule_policy = server_args.schedule_policy
+        self.enable_priority_scheduling = server_args.enable_priority_scheduling
+        self.schedule_low_priority_values_first = (
+            server_args.schedule_low_priority_values_first
+        )
+        self.priority_scheduling_preemption_threshold = (
+            server_args.priority_scheduling_preemption_threshold
+        )
         self.enable_lora = server_args.enable_lora
         self.max_loras_per_batch = server_args.max_loras_per_batch
         self.enable_overlap = not server_args.disable_overlap_schedule
@@ -357,7 +364,12 @@ class Scheduler(SGLANG_Scheduler):
             self.schedule_policy,
             self.tree_cache,
             self.enable_hierarchical_cache,
+            self.enable_priority_scheduling,
+            self.schedule_low_priority_values_first,
         )
+        # Enable preemption for priority scheduling.
+        self.try_preemption = self.enable_priority_scheduling
+
         assert (
             server_args.schedule_conservativeness >= 0
         ), "Invalid schedule_conservativeness"
@@ -471,10 +483,6 @@ class Scheduler(SGLANG_Scheduler):
             if self.spec_algorithm.is_none():
                 model_worker_batch = batch.get_model_worker_batch()
 
-                # update the consumer index of hicache to the running batch
-                self.tp_worker.set_hicache_consumer(
-                    model_worker_batch.hicache_consumer_index
-                )
                 if self.pp_group.is_last_rank:
                     logits_output, next_token_ids, can_run_cuda_graph = (
                         self.tp_worker.forward_batch_generation(model_worker_batch)
