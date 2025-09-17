@@ -207,7 +207,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 )
 
                 # Init streams
-                if self.server_args.speculative_algorithm == "EAGLE":
+                if self.server_args.speculative_algorithm == "EAGLE" or self.server_args.speculative_algorithm == "PHOENIX":
                     if (
                         not hasattr(self, "plan_stream_for_flashinfer")
                         or not self.plan_stream_for_flashinfer

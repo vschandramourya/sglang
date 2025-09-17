@@ -515,7 +515,7 @@ class ScheduleBatch(SGLangScheduleBatch):
         self.forward_mode = ForwardMode.DECODE
         bs = len(self.reqs)
 
-        if self.spec_algorithm.is_eagle() or self.spec_algorithm.is_standalone():
+        if self.spec_algorithm.is_eagle() or self.spec_algorithm.is_standalone() or self.spec_algorithm.is_phoenix():
             # if spec decoding is used, the decode batch is prepared inside
             # `forward_batch_speculative_generation` after running draft models.
             return

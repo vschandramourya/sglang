@@ -1,3 +1,4 @@
+import argparse
 import dataclasses
 import logging
 import os
@@ -27,6 +28,15 @@ add_attention_backend_choices(TGL_PRIVATE_ATTENTION_BACKENDS)
 
 @dataclasses.dataclass
 class ServerArgs(SGLANG_ServerArgs):
+
+    # Suffix tree decoding
+    enable_suffix_decoding: bool = False
+    suffix_cache_max_depth: int = 64
+    suffix_cache_ratio: float = 1.0
+    suffix_max_spec_factor: float = 1.0
+    suffix_max_spec_offset: float = 0.0
+    suffix_min_token_prob: float = 0.1
+    suffix_min_score_ratio: float = 1.2
 
     def __post_init__(self):
         # Check deprecated arguments
@@ -365,7 +375,7 @@ class ServerArgs(SGLANG_ServerArgs):
             # NEXTN shares the same implementation of EAGLE
             self.speculative_algorithm = "EAGLE"
 
-        if self.speculative_algorithm in ("EAGLE", "EAGLE3", "STANDALONE"):
+        if self.speculative_algorithm in ("EAGLE", "EAGLE3", "STANDALONE", "PHOENIX"):
             if self.speculative_algorithm == "STANDALONE":
                 # TODO: support dp attention for standalone speculative decoding
                 assert (
@@ -376,13 +386,13 @@ class ServerArgs(SGLANG_ServerArgs):
             self.disable_overlap_schedule = True
             logger.warning(
                 "Overlap scheduler is disabled because of using "
-                "eagle speculative decoding."
+                "eagle/phoenix speculative decoding."
             )
             if self.enable_mixed_chunk:
                 self.enable_mixed_chunk = False
                 logger.warning(
                     "Mixed chunked prefill is disabled because of using "
-                    "eagle speculative decoding."
+                    "eagle/phoenix speculative decoding."
                 )
 
             model_arch = self.get_hf_config().architectures[0]
@@ -495,3 +505,58 @@ class ServerArgs(SGLANG_ServerArgs):
                 "The arguments enable-hierarchical-cache and disable-radix-cache are mutually exclusive "
                 "and cannot be used at the same time. Please use only one of them."
             )
+
+    @staticmethod
+    def add_cli_args(parser: argparse.ArgumentParser):
+        SGLANG_ServerArgs.add_cli_args(parser)
+        for action in parser._actions:
+            if action.dest == 'speculative_algorithm':
+                action.choices.append("PHOENIX")
+
+        # Suffix tree decoding
+        parser.add_argument(
+            "--enable-suffix-decoding",
+            action="store_true",
+            help="Enable suffix tree decoding for speculative decoding.",
+        )
+        parser.add_argument(
+            "--suffix-cache-max-depth",
+            type=int,
+            default=ServerArgs.suffix_cache_max_depth,
+            help="Maximum depth of the suffix tree cache.",
+        )
+        parser.add_argument(
+            "--suffix-cache-ratio",
+            type=float,
+            default=ServerArgs.suffix_cache_ratio,
+            help="Ratio for combining frequency and probability scores in suffix tree.",
+        )
+        parser.add_argument(
+            "--suffix-max-spec-factor",
+            type=float,
+            default=ServerArgs.suffix_max_spec_factor,
+            help="Maximum speculation factor for suffix tree.",
+        )
+        parser.add_argument(
+            "--suffix-max-spec-offset",
+            type=float,
+            default=ServerArgs.suffix_max_spec_offset,
+            help="Maximum speculation offset for suffix tree.",
+        )
+        parser.add_argument(
+            "--suffix-min-token-prob",
+            type=float,
+            default=ServerArgs.suffix_min_token_prob,
+            help="Minimum token probability for suffix tree speculation.",
+        )
+        parser.add_argument(
+            "--suffix-min-score-ratio",
+            type=float,
+            default=ServerArgs.suffix_min_score_ratio,
+            help="Minimum score ratio for suffix tree to override other methods.",
+        )
+        parser.add_argument(
+            "--suffix-enable-score",
+            action="store_true",
+            help="Enable score-based suffix tree override.",
+        )
