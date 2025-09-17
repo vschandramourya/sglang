@@ -129,5 +129,5 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
                 model_worker_batch.bid,
                 sum(verify_output.accept_length_per_req_cpu),
                 can_run_cuda_graph,
-                verify_output.accept_length_per_req_cpu,  # Add per-request acceptance lengths to bulid the suffix tree
+                verify_output.accept_length_per_req_cpu,  # Add per-request acceptance lengths to build the suffix tree
             )
