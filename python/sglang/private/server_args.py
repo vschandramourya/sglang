@@ -510,7 +510,7 @@ class ServerArgs(SGLANG_ServerArgs):
     def add_cli_args(parser: argparse.ArgumentParser):
         SGLANG_ServerArgs.add_cli_args(parser)
         for action in parser._actions:
-            if action.dest == 'speculative_algorithm':
+            if action.dest == "speculative_algorithm":
                 action.choices.append("PHOENIX")
 
         # Suffix tree decoding

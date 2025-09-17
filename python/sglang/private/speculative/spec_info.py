@@ -8,7 +8,7 @@ class SpeculativeAlgorithm(IntEnum):
     EAGLE3 = auto()
     STANDALONE = auto()
     PHOENIX = auto()
-        
+
     def is_none(self):
         return self == SpeculativeAlgorithm.NONE
 

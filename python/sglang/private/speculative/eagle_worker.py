@@ -1,10 +1,12 @@
-import torch
 from typing import Tuple
 
-from sglang.srt.managers.schedule_batch import global_server_args_dict
-from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
+import torch
+
 from sglang.private.managers.schedule_batch import ScheduleBatch
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+from sglang.srt.managers.schedule_batch import global_server_args_dict
+from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
+
 
 class EAGLEWorker(SGLANG_EAGLEWorker):
 
@@ -96,7 +98,14 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids, seq_lens_cpu
                 )
-            return logits_output, next_token_ids, bid, 0, False, []  # Add empty acceptance lengths
+            return (
+                logits_output,
+                next_token_ids,
+                bid,
+                0,
+                False,
+                [],
+            )  # Add empty acceptance lengths
         else:
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 spec_info = self.draft(batch)

@@ -1,10 +1,19 @@
-from sglang.srt.model_executor.cuda_graph_runner import CudaGraphRunner as SGLANG_CudaGraphRunner
-from typing import Optional, TYPE_CHECKING
-
 import bisect
-import torch
 import logging
+from typing import TYPE_CHECKING, Optional
 
+import torch
+
+from sglang.srt.layers.dp_attention import get_attention_tp_rank, get_attention_tp_size
+from sglang.srt.model_executor.cuda_graph_runner import CUDA_GRAPH_CAPTURE_FAILED_MSG
+from sglang.srt.model_executor.cuda_graph_runner import (
+    CudaGraphRunner as SGLANG_CudaGraphRunner,
+)
+from sglang.srt.model_executor.cuda_graph_runner import (
+    get_batch_sizes_to_capture,
+    model_capture_mode,
+    set_torch_compile_config,
+)
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
     ForwardBatch,
@@ -12,26 +21,21 @@ from sglang.srt.model_executor.forward_batch_info import (
     PPProxyTensors,
     enable_num_token_non_padded,
 )
+from sglang.srt.two_batch_overlap import TboCudaGraphRunnerPlugin
 from sglang.srt.utils import (
+    log_info_on_rank0,
     require_attn_tp_gather,
     require_gathered_buffer,
     require_mlp_sync,
     require_mlp_tp_gather,
 )
-from sglang.srt.utils import log_info_on_rank0
-
-from sglang.srt.layers.dp_attention import (
-    get_attention_tp_size,
-    get_attention_tp_rank,
-)
-from sglang.srt.model_executor.cuda_graph_runner import CUDA_GRAPH_CAPTURE_FAILED_MSG, get_batch_sizes_to_capture, model_capture_mode, set_torch_compile_config
-from sglang.srt.two_batch_overlap import TboCudaGraphRunnerPlugin
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sglang.private.model_executor.model_runner import ModelRunner
-    
+
+
 class CudaGraphRunner(SGLANG_CudaGraphRunner):
 
     def __init__(self, model_runner: "ModelRunner"):
@@ -189,12 +193,14 @@ class CudaGraphRunner(SGLANG_CudaGraphRunner):
             raise Exception(
                 f"Capture cuda graph failed: {e}\n{CUDA_GRAPH_CAPTURE_FAILED_MSG}"
             )
-    
+
     def can_run(self, forward_batch: ForwardBatch):
         if self.require_mlp_tp_gather:
             cuda_graph_bs = (
                 max(forward_batch.global_num_tokens_cpu) // self.num_tokens_per_bs
-                if self.model_runner.spec_algorithm.is_eagle() or self.model_runner.spec_algorithm.is_standalone() or self.model_runner.spec_algorithm.is_phoenix()
+                if self.model_runner.spec_algorithm.is_eagle()
+                or self.model_runner.spec_algorithm.is_standalone()
+                or self.model_runner.spec_algorithm.is_phoenix()
                 else max(forward_batch.global_num_tokens_cpu)
             )
         else:
@@ -257,7 +263,9 @@ class CudaGraphRunner(SGLANG_CudaGraphRunner):
             max_num_tokens = max(forward_batch.global_num_tokens_cpu)
             max_batch_size = (
                 max_num_tokens / self.num_tokens_per_bs
-                if self.model_runner.spec_algorithm.is_eagle() or self.model_runner.spec_algorithm.is_standalone() or self.model_runner.spec_algorithm.is_phoenix()
+                if self.model_runner.spec_algorithm.is_eagle()
+                or self.model_runner.spec_algorithm.is_standalone()
+                or self.model_runner.spec_algorithm.is_phoenix()
                 else max_num_tokens
             )
             index = bisect.bisect_left(self.capture_bs, max_batch_size)

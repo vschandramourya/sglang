@@ -50,8 +50,8 @@ class LlamaDecoderLayer(LlamaDecoderLayer):
 
         # Skip the input_layernorm
         # https://github.com/SafeAILab/EAGLE/blob/35c78f6cdc19a73e05cf5c330b4c358dad970c6a/eagle/model/cnets.py#L427
-        
-        if layer_id == 0 and not phoenix_flag: #if phoenix is true then skip
+
+        if layer_id == 0 and not phoenix_flag:  # if phoenix is true then skip
             del self.input_layernorm
             setattr(self, "input_layernorm", lambda x: x)
 
@@ -112,6 +112,7 @@ class LlamaModel(nn.Module):
             )
         return hidden_states + residual
 
+
 class LlamaModelPhoenix(nn.Module):
     def __init__(
         self,
@@ -139,7 +140,9 @@ class LlamaModelPhoenix(nn.Module):
                 for i in range(config.num_hidden_layers)
             ]
         )
-        self.fc = torch.nn.Linear(config.hidden_size + config.target_hidden_size, config.hidden_size)
+        self.fc = torch.nn.Linear(
+            config.hidden_size + config.target_hidden_size, config.hidden_size
+        )
         # Add norm layer - will be set to None if not in checkpoint (handled in phoenixload_weights)
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
@@ -157,12 +160,15 @@ class LlamaModelPhoenix(nn.Module):
             hidden_states = input_embeds
 
         # assert last dim of spec_info hidden states matches target hidden size
-        if forward_batch.spec_info.hidden_states.shape[-1] != self.config.target_hidden_size:
+        if (
+            forward_batch.spec_info.hidden_states.shape[-1]
+            != self.config.target_hidden_size
+        ):
             raise ValueError(
                 f"Expected spec_info hidden states last dim {forward_batch.spec_info.hidden_states.shape[-1]} "
                 f"to match target hidden size {self.config.target_hidden_size}"
             )
-        
+
         # forward_batch.spec_info.hidden_states is the target model hidden states
         hidden_states = self.fc(
             torch.cat((hidden_states, forward_batch.spec_info.hidden_states), dim=-1)
@@ -178,7 +184,7 @@ class LlamaModelPhoenix(nn.Module):
             )
 
         # Apply norm if it exists, rms norm will handle residual
-        if self.norm is not None: 
+        if self.norm is not None:
             hidden_states, _ = self.norm(hidden_states, residual)
             return hidden_states
         else:
@@ -198,8 +204,8 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
         self.pp_group = get_pp_group()
         # Llama 3.2 1B Instruct set tie_word_embeddings to True
         # Llama 3.1 8B Instruct set tie_word_embeddings to False
-        #check if speculator_type key exists, and if it's eq. to 'phoenix'. If no for either, then use eagle weight loading
-        self.config_speculator_type = getattr(config, "speculator_type", None) 
+        # check if speculator_type key exists, and if it's eq. to 'phoenix'. If no for either, then use eagle weight loading
+        self.config_speculator_type = getattr(config, "speculator_type", None)
         if self.config_speculator_type == "phoenix":
             self.model = LlamaModelPhoenix(
                 config, quant_config=quant_config, prefix=add_prefix("model", prefix)
@@ -209,7 +215,7 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
                 config, quant_config=quant_config, prefix=add_prefix("model", prefix)
             )
 
-        #need to init self.model first    
+        # need to init self.model first
         if self.config.tie_word_embeddings:
             self.lm_head = self.model.embed_tokens
         else:
@@ -222,7 +228,6 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
 
         self.logits_processor = LogitsProcessor(config)
         self.capture_aux_hidden_states = False
-
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         if self.config_speculator_type == "phoenix":
@@ -248,7 +253,9 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
         # Check what weights exist in checkpoint, and set model.norm and input_layernorm
         weight_names = [name for name, _ in weights_list]
         has_norm = any("norm.weight" in name for name in weight_names)
-        has_input_layernorm = any("layers.0.input_layernorm" in name for name in weight_names)
+        has_input_layernorm = any(
+            "layers.0.input_layernorm" in name for name in weight_names
+        )
 
         # Configure model based on checkpoint
         if not has_norm:
@@ -256,9 +263,9 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
 
         if not has_input_layernorm:
             # Skip input_layernorm for layer 0 if not in checkpoint
-            if hasattr(self.model.layers[0], 'input_layernorm'):
-                delattr(self.model.layers[0], 'input_layernorm')
-                setattr(self.model.layers[0], 'input_layernorm', lambda x: x)
+            if hasattr(self.model.layers[0], "input_layernorm"):
+                delattr(self.model.layers[0], "input_layernorm")
+                setattr(self.model.layers[0], "input_layernorm", lambda x: x)
 
         # actually load the weights
         loaded_count = 0

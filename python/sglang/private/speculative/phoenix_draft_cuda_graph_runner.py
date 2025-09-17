@@ -21,7 +21,6 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.speculative.eagle_utils import EagleDraftInput
-
 from sglang.srt.utils import (
     require_attn_tp_gather,
     require_gathered_buffer,
@@ -283,35 +282,44 @@ class PhoenixDraftCudaGraphRunner:
         parents_list = [x[:raw_bs] for x in parents_list]
         return (score_list, token_list, parents_list)
 
-    def _apply_suffix_tree_tokens_to_cuda_graph_output(self, out, suffix_spec_tokens_batch, raw_bs):
+    def _apply_suffix_tree_tokens_to_cuda_graph_output(
+        self, out, suffix_spec_tokens_batch, raw_bs
+    ):
         """
         Apply suffix tree tokens to CUDA graph output for multiple requests in batch.
-        
+
         This method modifies the token_list and score_list from the CUDA graph execution
         to incorporate suffix tree tokens instead of Phoenix-generated tokens for specific steps.
         """
         score_list, token_list, parents_list = out
-        
-        if not isinstance(suffix_spec_tokens_batch, list) or len(suffix_spec_tokens_batch) == 0:
+
+        if (
+            not isinstance(suffix_spec_tokens_batch, list)
+            or len(suffix_spec_tokens_batch) == 0
+        ):
             return out
-            
+
         # Apply suffix tree tokens to the output for each request
-        for step_idx in range(1, len(token_list)):  # Start from step 1 (step 0 is initial token)
+        for step_idx in range(
+            1, len(token_list)
+        ):  # Start from step 1 (step 0 is initial token)
             token_step_idx = step_idx - 1  # Index into suffix tokens (0-indexed)
-            
+
             # Process each request in the batch
             for req_idx in range(min(raw_bs, len(suffix_spec_tokens_batch))):
                 if suffix_spec_tokens_batch[req_idx] is not None:
                     req_suffix_tokens = suffix_spec_tokens_batch[req_idx]
-                    if isinstance(req_suffix_tokens, list) and token_step_idx < len(req_suffix_tokens):
+                    if isinstance(req_suffix_tokens, list) and token_step_idx < len(
+                        req_suffix_tokens
+                    ):
                         # Replace tokens for this request with suffix tree token
                         suffix_token = req_suffix_tokens[token_step_idx]
                         if token_list[step_idx].shape[0] > req_idx:
                             token_list[step_idx][req_idx].fill_(suffix_token)
                             score_list[step_idx][req_idx].fill_(1.0)
-        
+
         return (score_list, token_list, parents_list)
-    
+
     def replay(self, forward_batch: ForwardBatch):
         assert forward_batch.out_cache_loc is not None
         raw_bs = forward_batch.batch_size
@@ -383,8 +391,10 @@ class PhoenixDraftCudaGraphRunner:
                 forward_batch.seq_lens_cpu = self.seq_lens_cpu[:raw_bs]
 
         # Apply suffix tree tokens if present
-        suffix_spec_tokens_batch = getattr(forward_batch, 'suffix_spec_tokens', None)
+        suffix_spec_tokens_batch = getattr(forward_batch, "suffix_spec_tokens", None)
         if suffix_spec_tokens_batch:
-            out = self._apply_suffix_tree_tokens_to_cuda_graph_output(out, suffix_spec_tokens_batch, raw_bs)
+            out = self._apply_suffix_tree_tokens_to_cuda_graph_output(
+                out, suffix_spec_tokens_batch, raw_bs
+            )
 
         return out

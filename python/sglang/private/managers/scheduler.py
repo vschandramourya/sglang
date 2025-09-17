@@ -1,41 +1,26 @@
-from sglang.srt.managers.scheduler import Scheduler as SGLANG_Scheduler
-from sglang.srt.managers.scheduler import IdleSleeper
-from sglang.srt.server_args import PortArgs, ServerArgs
-from sglang.srt.managers.utils import DPBalanceMeta
-
-from sglang.private.managers.schedule_batch import ScheduleBatch
-from sglang.srt.managers.schedule_batch import global_server_args_dict
-from sglang.srt.managers.scheduler import GenerationBatchResult, EmbeddingBatchResult
-
-from typing import Optional, Union, List, Dict
-import time
 import logging
 import threading
+import time
+from types import SimpleNamespace
+from typing import Dict, List, Optional, Union
+
 import psutil
 import torch
 import zmq
-from types import SimpleNamespace
+
+from sglang.global_config import global_config
+from sglang.private.managers.schedule_batch import ScheduleBatch
 
 # Import missing classes and functions
 from sglang.srt.configs.model_config import ModelConfig
-from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
-from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
-from sglang.srt.utils import get_zmq_socket, get_available_gpu_memory, set_random_seed
-from sglang.srt.managers.tp_worker import TpModelWorker
-from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
-from sglang.srt.managers.session_controller import Session
-from sglang.srt.managers.schedule_batch import Req
-from sglang.srt.managers.schedule_policy import SchedulePolicy
-from sglang.srt.managers.scheduler_recv_skipper import SchedulerRecvSkipper
-from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
-from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
-from sglang.srt.disaggregation.utils import DisaggregationMode
-from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.constrained.base_grammar_backend import create_grammar_backend
-from sglang.srt.distributed import get_pp_group, get_world_group, get_tensor_model_parallel_rank
-from sglang.srt.utils import configure_gc_logger, get_bool_env_var
-from sglang.utils import TypeBasedDispatcher
-from sglang.global_config import global_config
+from sglang.srt.disaggregation.utils import DisaggregationMode
+from sglang.srt.distributed import (
+    get_pp_group,
+    get_tensor_model_parallel_rank,
+    get_world_group,
+)
+from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
 
 # Import request types for dispatcher
 from sglang.srt.managers.io_struct import (
@@ -69,15 +54,40 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightsFromDistributedReqInput,
     UpdateWeightsFromTensorReqInput,
 )
+from sglang.srt.managers.schedule_batch import Req, global_server_args_dict
+from sglang.srt.managers.schedule_policy import SchedulePolicy
+from sglang.srt.managers.scheduler import (
+    EmbeddingBatchResult,
+    GenerationBatchResult,
+    IdleSleeper,
+)
+from sglang.srt.managers.scheduler import Scheduler as SGLANG_Scheduler
+from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
 
 # Import missing classes
 from sglang.srt.managers.scheduler_recv_skipper import SchedulerRecvSkipper
-from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
+from sglang.srt.managers.session_controller import Session
+from sglang.srt.managers.tp_worker import TpModelWorker
+from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
+from sglang.srt.managers.utils import DPBalanceMeta
+from sglang.srt.parser.reasoning_parser import ReasoningParser
+from sglang.srt.server_args import PortArgs, ServerArgs
+from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
+from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
+from sglang.srt.utils import (
+    configure_gc_logger,
+    get_available_gpu_memory,
+    get_bool_env_var,
+    get_zmq_socket,
+    set_random_seed,
+)
+from sglang.utils import TypeBasedDispatcher
 
 logger = logging.getLogger(__name__)
 
+
 class Scheduler(SGLANG_Scheduler):
-    
+
     def __init__(
         self,
         server_args: ServerArgs,
@@ -502,8 +512,14 @@ class Scheduler(SGLANG_Scheduler):
                     accept_length_per_req_cpu,
                 ) = self.draft_worker.forward_batch_speculative_generation(batch)
                 # handle suffix tree update
-                if self.server_args.enable_suffix_decoding and get_tensor_model_parallel_rank() == 0 and (self.pp_group.world_size == 1 or self.pp_group.is_last_rank):
-                    self.tp_worker.model_runner.update_suffix_cache_from_scheduler(batch, next_token_ids, accept_length_per_req_cpu)
+                if (
+                    self.server_args.enable_suffix_decoding
+                    and get_tensor_model_parallel_rank() == 0
+                    and (self.pp_group.world_size == 1 or self.pp_group.is_last_rank)
+                ):
+                    self.tp_worker.model_runner.update_suffix_cache_from_scheduler(
+                        batch, next_token_ids, accept_length_per_req_cpu
+                    )
                 bs = batch.batch_size()
                 self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
                 self.spec_num_total_forward_ct += bs
@@ -515,7 +531,11 @@ class Scheduler(SGLANG_Scheduler):
             # These 2 values are needed for processing the output, but the values can be
             # modified by overlap schedule. So we have to copy them here so that
             # we can use the correct values in output processing.
-            if batch.return_logprob or self.spec_algorithm.is_eagle() or self.spec_algorithm.is_phoenix():
+            if (
+                batch.return_logprob
+                or self.spec_algorithm.is_eagle()
+                or self.spec_algorithm.is_phoenix()
+            ):
                 extend_input_len_per_req = [req.extend_input_len for req in batch.reqs]
             else:
                 extend_input_len_per_req = None

@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import time
@@ -5,9 +6,15 @@ from contextlib import contextmanager
 from typing import List, Optional, Tuple
 
 import torch
-import copy
 from huggingface_hub import snapshot_download
 
+from sglang.private.managers.schedule_batch import ScheduleBatch
+from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
+    PhoenixDraftCudaGraphRunner,
+)
+from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import (
+    PhoenixDraftExtendCudaGraphRunner,
+)
 from sglang.srt.distributed import (
     GroupCoordinator,
     get_tp_group,
@@ -16,11 +23,7 @@ from sglang.srt.distributed import (
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import get_token_ids_logprobs, get_top_logprobs
 from sglang.srt.managers.mm_utils import embed_mm_inputs
-from sglang.private.managers.schedule_batch import ScheduleBatch
-from sglang.srt.managers.schedule_batch import (
-    get_last_loc,
-    global_server_args_dict,
-)
+from sglang.srt.managers.schedule_batch import get_last_loc, global_server_args_dict
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
@@ -29,11 +32,9 @@ from sglang.srt.model_executor.forward_batch_info import (
 )
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.speculative.build_eagle_tree import build_tree_kernel_efficient
-from sglang.private.speculative.phoenix_draft_cuda_graph_runner import PhoenixDraftCudaGraphRunner
-from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import PhoenixDraftExtendCudaGraphRunner
-from sglang.srt.speculative.eagle_utils import EagleVerifyInput
 from sglang.srt.speculative.eagle_utils import (
     EagleDraftInput,
+    EagleVerifyInput,
     EagleVerifyOutput,
     assign_draft_cache_locs,
     fast_topk,
@@ -55,6 +56,7 @@ if is_cuda():
 
 logger = logging.getLogger(__name__)
 RETURN_ORIGINAL_LOGPROB = get_bool_env_var("RETURN_ORIGINAL_LOGPROB")
+
 
 @contextmanager
 def draft_tp_context(tp_group: GroupCoordinator):
@@ -140,10 +142,10 @@ class PhoenixWorker(TpModelWorker):
 
         # Cache the phoenix flag and determine target hidden size once for performance
         self._is_phoenix = self.speculative_algorithm.is_phoenix()
-        
+
         # Determine effective target hidden size with fallback for compatibility
         if self._is_phoenix:
-            if hasattr(self.draft_model_runner.model.config, 'target_hidden_size'):
+            if hasattr(self.draft_model_runner.model.config, "target_hidden_size"):
                 eff_target = self.draft_model_runner.model.config.target_hidden_size
             else:
                 raise ValueError(
@@ -471,7 +473,14 @@ class PhoenixWorker(TpModelWorker):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids, seq_lens_cpu
                 )
-            return logits_output, next_token_ids, bid, 0, False, []  # Add empty acceptance lengths
+            return (
+                logits_output,
+                next_token_ids,
+                bid,
+                0,
+                False,
+                [],
+            )  # Add empty acceptance lengths
         else:
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 spec_info = self.draft(batch)
@@ -673,7 +682,9 @@ class PhoenixWorker(TpModelWorker):
 
         # Check if we should use suffix tree tokens - handle multiple requests in batch
         suffix_spec_tokens_batch = None
-        if self.server_args.enable_suffix_decoding and hasattr(self.target_worker, 'model_runner'):
+        if self.server_args.enable_suffix_decoding and hasattr(
+            self.target_worker, "model_runner"
+        ):
             try:
                 # Get the tokens that Phoenix will use as starting points for each request
                 last_token_ids = []
@@ -683,16 +694,28 @@ class PhoenixWorker(TpModelWorker):
                     phoenix_first_token = spec_info.topk_index[req_idx][0].item()
                     last_token_ids.append(phoenix_first_token)
                 # Generate suffix tree proposals for all requests in batch
-                suffix_draft_results = self.target_worker.model_runner.generate_suffix_draft_tokens(batch, last_token_ids)
+                suffix_draft_results = (
+                    self.target_worker.model_runner.generate_suffix_draft_tokens(
+                        batch, last_token_ids
+                    )
+                )
                 if suffix_draft_results:
-                    min_score = self.server_args.suffix_min_score_ratio * self.speculative_num_draft_tokens
+                    min_score = (
+                        self.server_args.suffix_min_score_ratio
+                        * self.speculative_num_draft_tokens
+                    )
                     suffix_spec_tokens_batch = []
                     # Process each request's suffix tree result separately
                     # Todo: improvement can be support suffix tree batch processing
                     for batch_idx, result in enumerate(suffix_draft_results):
                         if batch_idx < batch_size:  # Ensure we don't exceed batch size
-                            if hasattr(result, 'score') and hasattr(result, 'token_ids'):
-                                if result.score >= min_score and len(result.token_ids) > 0:
+                            if hasattr(result, "score") and hasattr(
+                                result, "token_ids"
+                            ):
+                                if (
+                                    result.score >= min_score
+                                    and len(result.token_ids) > 0
+                                ):
                                     # score is high enough, use suffix tree tokens
                                     suffix_spec_tokens_batch.append(result.token_ids)
                                 else:
@@ -800,10 +823,14 @@ class PhoenixWorker(TpModelWorker):
         token_list: List[torch.Tensor] = []
         parents_list: List[torch.Tensor] = []
 
-        suffix_spec_tokens_batch = getattr(forward_batch, 'suffix_spec_tokens', None)
+        suffix_spec_tokens_batch = getattr(forward_batch, "suffix_spec_tokens", None)
 
         # assert of hidden states of target matches the spec's config target hidden size
-        if self._is_phoenix and hidden_states.shape[-1] != self.draft_model_runner.model.config.target_hidden_size:
+        if (
+            self._is_phoenix
+            and hidden_states.shape[-1]
+            != self.draft_model_runner.model.config.target_hidden_size
+        ):
             raise ValueError(
                 f"@ eagle worker"
                 f"Expected hidden states last dim {hidden_states.shape[-1]} "
@@ -818,19 +845,31 @@ class PhoenixWorker(TpModelWorker):
             )
 
             # If we have suffix tree tokens, replace the selected tokens with suffix tree tokens for each request
-            if suffix_spec_tokens_batch and isinstance(suffix_spec_tokens_batch, list) and i > 0:
+            if (
+                suffix_spec_tokens_batch
+                and isinstance(suffix_spec_tokens_batch, list)
+                and i > 0
+            ):
                 step_idx = i - 1  # Step index for suffix tokens (0-indexed)
                 batch_size = tree_info[1].shape[0]
                 # Process each request in the batch
                 for req_idx in range(min(batch_size, len(suffix_spec_tokens_batch))):
                     if suffix_spec_tokens_batch[req_idx] is not None:
                         req_suffix_tokens = suffix_spec_tokens_batch[req_idx]
-                        if isinstance(req_suffix_tokens, list) and step_idx < len(req_suffix_tokens):
+                        if isinstance(req_suffix_tokens, list) and step_idx < len(
+                            req_suffix_tokens
+                        ):
                             # Use suffix tree token for this request at this step
                             suffix_token = req_suffix_tokens[step_idx]
-                            tree_info[1][req_idx].fill_(suffix_token)   # Replace token for this request
-                            tree_info[0][req_idx].fill_(1.0)            # Suffix tree only do greedy pick now
-                            input_ids[req_idx] = suffix_token           # Update input_id for this request
+                            tree_info[1][req_idx].fill_(
+                                suffix_token
+                            )  # Replace token for this request
+                            tree_info[0][req_idx].fill_(
+                                1.0
+                            )  # Suffix tree only do greedy pick now
+                            input_ids[req_idx] = (
+                                suffix_token  # Update input_id for this request
+                            )
 
             score_list.append(tree_info[0])
             token_list.append(tree_info[1])
@@ -848,7 +887,7 @@ class PhoenixWorker(TpModelWorker):
             # spec_info.hidden_states = hidden_states
 
             if suffix_spec_tokens_batch:
-                spec_info.hidden_states = hidden_states[:input_ids.shape[0]]
+                spec_info.hidden_states = hidden_states[: input_ids.shape[0]]
             else:
                 spec_info.hidden_states = hidden_states
 
@@ -861,7 +900,7 @@ class PhoenixWorker(TpModelWorker):
             topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
             if self.hot_token_id is not None:
                 topk_index = self.hot_token_id[topk_index]
-            if not self._is_phoenix: 
+            if not self._is_phoenix:
                 hidden_states = logits_output.hidden_states
 
         return score_list, token_list, parents_list
@@ -916,7 +955,9 @@ class PhoenixWorker(TpModelWorker):
                 batch.sampling_info.vocab_mask = None
 
         self._detect_nan_if_needed(logits_output)
-        spec_info.hidden_states = logits_output.hidden_states # THIS IS TARGET MODEL (VERIFY) HIDDEN STATES
+        spec_info.hidden_states = (
+            logits_output.hidden_states
+        )  # THIS IS TARGET MODEL (VERIFY) HIDDEN STATES
 
         res: EagleVerifyOutput = spec_info.verify(
             batch,
@@ -966,8 +1007,8 @@ class PhoenixWorker(TpModelWorker):
             )
         else:
             logprobs = torch.nn.functional.log_softmax(
-            logits_output.next_token_logits / temperatures, dim=-1
-        )
+                logits_output.next_token_logits / temperatures, dim=-1
+            )
 
         batch_next_token_ids = res.verified_id
         num_tokens_per_req = [accept + 1 for accept in res.accept_length_per_req_cpu]
@@ -1167,7 +1208,9 @@ class PhoenixWorker(TpModelWorker):
         probs = torch.softmax(logits_output.next_token_logits, dim=-1)
         draft_input.topk_p, draft_input.topk_index = fast_topk(probs, self.topk, dim=-1)
 
-    def capture_spec_info_hidden_states(self, logits_output: LogitsProcessorOutput, forward_batch: ForwardBatch):
+    def capture_spec_info_hidden_states(
+        self, logits_output: LogitsProcessorOutput, forward_batch: ForwardBatch
+    ):
         if self._is_phoenix:
             padded_static_len = getattr(forward_batch, "padded_static_len", -1)
             if padded_static_len < 0:
@@ -1185,7 +1228,9 @@ class PhoenixWorker(TpModelWorker):
                     + forward_batch.extend_seq_lens
                     - 1
                 )
-            forward_batch.spec_info.hidden_states = forward_batch.spec_info.hidden_states[last_index]
+            forward_batch.spec_info.hidden_states = (
+                forward_batch.spec_info.hidden_states[last_index]
+            )
         else:
             forward_batch.spec_info.hidden_states = logits_output.hidden_states
 
@@ -1252,4 +1297,3 @@ def get_last_loc_large_page_size_large_top_k(
     )
 
     return prefix_lens, seq_lens, last_loc, num_new_pages_per_topk, extend_lens
-
