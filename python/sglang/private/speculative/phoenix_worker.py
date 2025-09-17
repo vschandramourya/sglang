@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import List, Optional, Tuple
 
 import torch
+import copy
 from huggingface_hub import snapshot_download
 
 from sglang.srt.distributed import (
@@ -15,8 +16,8 @@ from sglang.srt.distributed import (
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import get_token_ids_logprobs, get_top_logprobs
 from sglang.srt.managers.mm_utils import embed_mm_inputs
+from sglang.private.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.schedule_batch import (
-    ScheduleBatch,
     get_last_loc,
     global_server_args_dict,
 )
@@ -120,8 +121,10 @@ class PhoenixWorker(TpModelWorker):
 
         # Init draft worker
         with empty_context():
+            server_args_draft = copy.deepcopy(server_args)
+            server_args_draft.quantization = None
             super().__init__(
-                server_args=server_args,
+                server_args=server_args_draft,
                 gpu_id=gpu_id,
                 tp_rank=tp_rank,
                 pp_rank=0,  # FIXME
@@ -568,8 +571,6 @@ class PhoenixWorker(TpModelWorker):
                     batch.seq_lens,
                     self.speculative_num_steps,
                 )
-                prefix_lens_cpu = batch.seq_lens_cpu
-                seq_lens_cpu = batch.seq_lens_cpu + self.speculative_num_steps
                 extend_num_tokens = num_seqs * self.speculative_num_steps
             else:
                 # In this case, the last partial page needs to be duplicated.
@@ -608,22 +609,11 @@ class PhoenixWorker(TpModelWorker):
 
                 # TODO(lmzheng): remove this device sync
                 extend_num_tokens = torch.sum(self.extend_lens).item()
-                prefix_lens_cpu = batch.seq_lens_cpu
-                last_page_lens = prefix_lens_cpu % self.page_size
-                num_new_pages_per_topk = (
-                    last_page_lens + self.speculative_num_steps + self.page_size - 1
-                ) // self.page_size
-                seq_lens_cpu = (
-                    prefix_lens_cpu // self.page_size * self.page_size
-                    + num_new_pages_per_topk * (self.page_size * self.topk)
-                )
 
             out_cache_loc, token_to_kv_pool_state_backup = (
                 batch.alloc_paged_token_slots_extend(
                     prefix_lens,
-                    prefix_lens_cpu,
                     seq_lens,
-                    seq_lens_cpu,
                     last_loc,
                     extend_num_tokens,
                     backup_state=True,
