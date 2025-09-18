@@ -20,8 +20,9 @@ from sglang.srt.layers.attention.utils import (
     create_flashmla_kv_indices_triton,
 )
 from sglang.srt.layers.dp_attention import get_attention_tp_size
+from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
-from sglang.srt.utils import is_flashinfer_available
+from sglang.srt.utils import is_cuda, is_flashinfer_available
 
 if is_flashinfer_available():
     import flashinfer
@@ -30,6 +31,11 @@ if TYPE_CHECKING:
     from sglang.srt.layers.radix_attention import RadixAttention
     from sglang.srt.model_executor.model_runner import ModelRunner
     from sglang.srt.speculative.spec_info import SpecInfo
+
+_is_cuda = is_cuda()
+
+if _is_cuda:
+    from sgl_kernel import concat_mla_absorb_q
 
 # Constants
 DEFAULT_WORKSPACE_SIZE_MB = 128  # Memory workspace size in MB
@@ -72,7 +78,12 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
         kv_indptr_buf: Optional[torch.Tensor] = None,
         q_indptr_decode_buf: Optional[torch.Tensor] = None,
     ):
-        super().__init__(model_runner, skip_prefill, kv_indptr_buf, q_indptr_decode_buf)
+        super().__init__(
+            model_runner,
+            skip_prefill,
+            kv_indptr_buf,
+            q_indptr_decode_buf,
+        )
 
         config = model_runner.model_config
 
@@ -111,6 +122,10 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
         self.decode_cuda_graph_kv_indices = None
         self.forward_prefill_metadata: Optional[TRTLLMMLAPrefillMetadata] = None
         self.forward_decode_metadata: Union[TRTLLMMLADecodeMetadata, None] = None
+
+        self.disable_chunked_prefix_cache = global_server_args_dict[
+            "disable_chunked_prefix_cache"
+        ]
 
     def _calc_padded_blocks(self, max_seq_len: int) -> int:
         """
@@ -301,6 +316,9 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
             and not forward_batch.forward_mode.is_target_verify()
             and not forward_batch.forward_mode.is_draft_extend()
         ):
+            if self.disable_chunked_prefix_cache:
+                super().init_forward_metadata(forward_batch)
+
             seq_lens = forward_batch.seq_lens - forward_batch.extend_prefix_lens
             cum_seq_lens_q = torch.cat(
                 (
@@ -469,7 +487,10 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
             q_rope_reshaped = q_rope.view(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
-            query = torch.cat([q_nope, q_rope_reshaped], dim=-1)
+            if _is_cuda and q_nope.shape[-1] == 512 and q_rope_reshaped.shape[-1] == 64:
+                query = concat_mla_absorb_q(q_nope, q_rope_reshaped)
+            else:
+                query = torch.cat([q_nope, q_rope_reshaped], dim=-1)
         else:
             # For FP8 path, we already have the query and rope parts merged because of the quantize_and_rope_for_fp8 function
             query = q.view(-1, layer.tp_q_head_num, layer.head_dim)
@@ -537,6 +558,11 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
             forward_batch.forward_mode.is_target_verify()
             or forward_batch.forward_mode.is_draft_extend()
         ):
+            return super().forward_extend(
+                q, k, v, layer, forward_batch, save_kv_cache, q_rope, k_rope
+            )
+        # chunked prefix cache is not enabled, use Flashinfer MLA prefill kernel
+        if forward_batch.attn_attend_prefix_cache is None:
             return super().forward_extend(
                 q, k, v, layer, forward_batch, save_kv_cache, q_rope, k_rope
             )
