@@ -27,7 +27,7 @@ class TestDeepseekV3FP4(CustomTestCase):
             "--tp",
             "4",
             "--attention-backend",
-            "trtllm_mla",
+            "trtllm_mla_tgl",
             "--moe-runner-backend",
             "flashinfer_trtllm",
             "--quantization",
@@ -87,7 +87,7 @@ class TestDeepseekV3FP4MTP(CustomTestCase):
             "--tp",
             "4",
             "--attention-backend",
-            "trtllm_mla",
+            "trtllm_mla_tgl",
             "--moe-runner-backend",
             "flashinfer_trtllm",
             "--quantization",
@@ -137,7 +137,7 @@ class TestDeepseekV3FP4MTP(CustomTestCase):
 
         if is_in_ci():
             write_github_step_summary(
-                f"### test_gsm8k (deepseek-v3-fp4 mtp trtllm_mla_tgl)\n"
+                f"### test_gsm8k (deepseek-v3-fp4 mtp)\n"
                 f'{metrics["accuracy"]=:.3f}\n'
                 f"{avg_spec_accept_length=:.2f}\n"
             )
@@ -152,7 +152,7 @@ class TestDeepseekV3FP4MTP(CustomTestCase):
 
         if is_in_ci():
             write_github_step_summary(
-                f"### test_bs_1_speed (deepseek-v3-fp4 mtp trtllm_mla_tgl)\n"
+                f"### test_bs_1_speed (deepseek-v3-fp4 mtp)\n"
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
@@ -171,7 +171,7 @@ class TestDeepseekV3FP4CutlassMoE(CustomTestCase):
             "--ep",
             "4",
             "--attention-backend",
-            "trtllm_mla",
+            "trtllm_mla_tgl",
             "--moe-runner-backend",
             "flashinfer_cutlass",
             "--quantization",

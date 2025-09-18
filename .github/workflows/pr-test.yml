@@ -261,6 +261,26 @@ jobs:
           cd test/srt
           python3 test_moe_eval_accuracy_large.py
 
+  unit-test-backend-4-gpu-b200:
+    needs: [check-changes]
+    if: always() && !failure() && !cancelled()
+    runs-on: b200-runner
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run test
+        timeout-minutes: 60
+        run: |
+          cd test/tgl
+          python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id 0 --auto-partition-size 1
+
   pr-test-finish:
     needs: [
       check-changes,
