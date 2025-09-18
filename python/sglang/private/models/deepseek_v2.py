@@ -115,6 +115,9 @@ class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
                 return AttnForwardMethod.MHA_CHUNKED_KV
             else:
                 return _dispatch_mla_subtype()
+        elif attention_backend == "fa4":
+            # TODO(cicirori): use FA4 MHA for DeepSeekV3 for now
+            return AttnForwardMethod.MHA_CHUNKED_KV
         elif attention_backend == "trtllm_mla":
             if (
                 forward_batch.forward_mode.is_extend()
