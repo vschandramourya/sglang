@@ -570,3 +570,6 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                 future.result()
 
         self.post_load_weights(is_nextn=is_nextn, weight_names=weight_names)
+
+
+EntryClass = [DeepseekV2ForCausalLM]
