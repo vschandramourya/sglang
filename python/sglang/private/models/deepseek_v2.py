@@ -417,7 +417,7 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                             logger, f"Loading shared norm weight for MTP: {name}"
                         )
                         name = "model.shared_head.norm.weight"
-                    else:
+                    elif not name.startswith(nextn_layer_prefix):
                         continue
 
                     # Use shared head and embed weights from target model
@@ -570,3 +570,10 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                 future.result()
 
         self.post_load_weights(is_nextn=is_nextn, weight_names=weight_names)
+
+
+class DeepseekV3ForCausalLM(DeepseekV2ForCausalLM):
+    pass
+
+
+EntryClass = [DeepseekV2ForCausalLM, DeepseekV3ForCausalLM]
