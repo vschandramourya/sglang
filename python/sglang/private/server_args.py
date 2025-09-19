@@ -5,7 +5,10 @@ import random
 
 from sglang.srt.hf_transformers_utils import check_gguf_file
 from sglang.srt.server_args import ServerArgs as SGLANG_ServerArgs
-from sglang.srt.server_args import add_attention_backend_choices
+from sglang.srt.server_args import (
+    add_attention_backend_choices,
+    print_deprecated_warning,
+)
 from sglang.srt.utils import (
     get_device,
     get_device_memory_capacity,
