@@ -422,13 +422,6 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                         name = "model.shared_head.norm.weight"
                     elif config_speculator_type == "phoenix":
                         # For phoenix, we have different weight and we need to handle this differently
-                        # if name == "lm_head.weight":
-                        #     log_info_on_rank0(
-                        #         logger,
-                        #         "Phoenix: loading draft head, lm_head.weight -> model.shared_head.head.weight",
-                        #     )
-                        #     name = "model.shared_head.head.weight"
-                        # handle weight naming for phoenix spec weights
                         if name in {"eh_proj.weight", "enorm.weight", "hnorm.weight"}:
                             original_name = name
                             name = f"{nextn_layer_prefix}." + name
@@ -437,6 +430,9 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                             )
                         # for eagle, it is always tie_word_embeddings, however for phoenix, it depends on the config tie_word_embeddings
                         tie_word_embeddings = self.config.tie_word_embeddings
+                        if name == "model.norm.weight":
+                            name = "model.shared_head.norm.weight"
+                            logger.info(f"Phoenix: rename model.norm.weight to {name}")
                     elif not name.startswith(nextn_layer_prefix):
                         continue
 
