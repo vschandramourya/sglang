@@ -93,6 +93,7 @@ ATTENTION_BACKEND_CHOICES = [
     # Common
     "triton",
     "torch_native",
+    "flex_attention",
     # NVIDIA specific
     "cutlass_mla",
     "fa3",
@@ -185,6 +186,7 @@ class ServerArgs:
     hybrid_kvcache_ratio: Optional[float] = None
     swa_full_tokens_ratio: float = 0.8
     disable_hybrid_swa_memory: bool = False
+    radix_eviction_policy: str = "lru"
 
     # Runtime options
     device: Optional[str] = None
@@ -590,6 +592,15 @@ class ServerArgs:
                 "Cuda graph is disabled because of using torch native attention backend"
             )
             self.disable_cuda_graph = True
+
+        if self.attention_backend == "flex_attention":
+            logger.warning(
+                "Cuda graph is disabled because of using torch Flex Attention backend"
+            )
+            self.disable_cuda_graph = True
+            assert (
+                self.speculative_algorithm is None
+            ), "Speculative decoding is currently not supported with Flex Attention backend"
 
         if is_npu() and self.attention_backend in ["ascend", "hybrid_linear_attn"]:
             logger.warning(
@@ -1906,6 +1917,13 @@ class ServerArgs:
             choices=["write_back", "write_through", "write_through_selective"],
             default=ServerArgs.hicache_write_policy,
             help="The write policy of hierarchical cache.",
+        )
+        parser.add_argument(
+            "--radix-eviction-policy",
+            type=str,
+            choices=["lru", "lfu"],
+            default=ServerArgs.radix_eviction_policy,
+            help="The eviction policy of radix trees. 'lru' stands for Least Recently Used, 'lfu' stands for Least Frequently Used.",
         )
         parser.add_argument(
             "--hicache-io-backend",
