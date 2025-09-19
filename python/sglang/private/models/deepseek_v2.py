@@ -412,17 +412,40 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                             ):
                                 continue
                 else:
+
+                    tie_word_embeddings = True
+                    config_speculator_type = getattr(self.config, "speculator_type", None)
                     if load_shared and name == "model.norm.weight":
                         log_info_on_rank0(
                             logger, f"Loading shared norm weight for MTP: {name}"
                         )
                         name = "model.shared_head.norm.weight"
+                    elif config_speculator_type == "phoenix":
+                        # For phoenix, we have different weight and we need to handle this differently
+                        # if name == "lm_head.weight":
+                        #     log_info_on_rank0(
+                        #         logger,
+                        #         "Phoenix: loading draft head, lm_head.weight -> model.shared_head.head.weight",
+                        #     )
+                        #     name = "model.shared_head.head.weight"
+                        # handle weight naming for phoenix spec weights
+                        if name in {"eh_proj.weight", "enorm.weight", "hnorm.weight"}:
+                            original_name = name
+                            name = f"{nextn_layer_prefix}." + name
+                            logger.info(
+                                f"Phoenix: remap top-level nextn-spec: {original_name} -> {name}"
+                            )
+                        # for eagle, it is always tie_word_embeddings, however for phoenix, it depends on the config tie_word_embeddings
+                        tie_word_embeddings = self.config.tie_word_embeddings
                     elif not name.startswith(nextn_layer_prefix):
                         continue
 
                     # Use shared head and embed weights from target model
-                    if "shared_head.head" in name or "embed_tokens" in name:
+                    if "shared_head.head" in name or "embed_tokens" in name and tie_word_embeddings:
                         continue
+                    
+                    if "embed_tokens" in name or "shared_head.head" in name:
+                        print("phoenix: not skipping loading embed_tokens or shared_head.head")
 
                     is_decoder = True
                     # For nextn specific weights
@@ -453,6 +476,8 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                     # Skip loading extra bias for GPTQ models.
                     if name.endswith(".bias") and name not in params_dict:
                         continue
+                    if "layer" not in name and is_nextn:
+                        logger.info(f"Phoenix: loading weight 1: {name}")
                     param = params_dict[name]
                     weight_loader = param.weight_loader
                     futures.append(
@@ -466,6 +491,8 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                             continue
                         name = name.replace(weight_name, param_name)
                         param = params_dict[name]
+                        if "layer" not in name and "decoder" not in name and is_nextn:
+                            logger.info(f"Phoenix: loading weight 2: {name}")
                         weight_loader = param.weight_loader
                         futures.append(
                             executor.submit(
@@ -530,6 +557,8 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                                         "fused_qkv_a_proj_with_mqa",
                                     )
                                 )
+                                if "layer" not in name and is_nextn:
+                                    logger.info(f"Phoenix: loading weight 3: {param_name}")
                                 param = params_dict[param_name]
 
                                 weight_loader = getattr(
@@ -558,6 +587,8 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                                 logger.warning(f"{name} not found in params_dict.")
                                 continue
                             param = params_dict[name]
+                            if "layer" not in name and is_nextn:
+                                logger.info(f"Phoenix: loading weight 4: {name}")
                             weight_loader = getattr(
                                 param, "weight_loader", default_weight_loader
                             )
