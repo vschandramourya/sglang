@@ -118,7 +118,7 @@ DISAGG_TRANSFER_BACKEND_CHOICES = ["mooncake", "nixl", "ascend", "fake"]
 
 GRAMMAR_BACKEND_CHOICES = ["xgrammar", "outlines", "llguidance", "none"]
 
-DETERMINISTIC_ATTENTION_BACKEND_CHOICES = ["flashinfer"]
+DETERMINISTIC_ATTENTION_BACKEND_CHOICES = ["flashinfer", "fa3"]
 
 
 # Allow external code to add more choices
@@ -547,6 +547,7 @@ class ServerArgs:
             else:
                 self.mem_fraction_static = 0.88
 
+            # Lazy init to avoid circular import.
             from sglang.srt.configs.model_config import ModelConfig
 
             model_config = ModelConfig.from_server_args(self)
@@ -860,9 +861,6 @@ class ServerArgs:
                     "speculative_eagle_topk > 1 with page_size > 1 is unstable and produces incorrect results for paged attention backends. This combination is only supported for the 'flashinfer' backend."
                 )
 
-        # The token generated from the verify step is counted.
-        # If sepculative_num_steps >= speculative_num_draft_tokens, the additional tokens will definitely be discarded.
-        # assert self.speculative_num_steps < self.speculative_num_draft_tokens
         if self.speculative_algorithm == "LOOKAHEAD":
             if not self.device.startswith("cuda"):
                 raise ValueError(
@@ -989,10 +987,11 @@ class ServerArgs:
                     "batch_invariant_ops is not installed. Please install it from https://github.com/thinking-machines-lab/batch_invariant_ops/."
                 )
 
-            self.disable_radix_cache = True
-            logger.warning(
-                "Currently radix cache is disabled for deterministic inference. It will be supported in the future."
-            )
+            if self.attention_backend != "fa3":
+                self.disable_radix_cache = True
+                logger.warning(
+                    "Currently radix cache is disabled for deterministic inference. It will be supported in the future."
+                )
             if self.attention_backend not in DETERMINISTIC_ATTENTION_BACKEND_CHOICES:
                 raise ValueError(
                     f"Currently only {DETERMINISTIC_ATTENTION_BACKEND_CHOICES} attention backends are supported for deterministic inference."
