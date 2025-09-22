@@ -9,7 +9,7 @@ import torch
 import zmq
 
 from sglang.global_config import global_config
-from sglang.private.managers.schedule_batch import ScheduleBatch
+from sglang.srt.managers.schedule_batch import ScheduleBatch
 
 # Import missing classes and functions
 from sglang.srt.configs.model_config import ModelConfig
@@ -29,6 +29,7 @@ from sglang.srt.managers.io_struct import (
     BatchTokenizedGenerateReqInput,
     ClearHiCacheReqInput,
     CloseSessionReqInput,
+    DestroyWeightsUpdateGroupReqInput,
     ExpertDistributionReq,
     FlushCacheReqInput,
     FreezeGCReq,
@@ -72,7 +73,7 @@ from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
 from sglang.srt.managers.utils import DPBalanceMeta
 from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.server_args import PortArgs, ServerArgs
-from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
+from sglang.private.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils import (
     configure_gc_logger,
@@ -99,7 +100,6 @@ class Scheduler(SGLANG_Scheduler):
         dp_rank: Optional[int],
         dp_balance_meta: Optional[DPBalanceMeta] = None,
     ):
-
         # Parse args
         self.server_args = server_args
         self.tp_rank = tp_rank
@@ -229,17 +229,33 @@ class Scheduler(SGLANG_Scheduler):
 
         # Launch a draft worker for speculative decoding
         if self.spec_algorithm.is_eagle():
-            from sglang.srt.speculative.eagle_worker import EAGLEWorker
+            if self.spec_algorithm.is_phoenix():
+                from sglang.private.speculative.phoenix_worker import PhoenixWorker
+                # tp_worker is TpModelWorkerClient       
 
-            self.draft_worker = EAGLEWorker(
-                gpu_id=gpu_id,
-                tp_rank=tp_rank,
-                moe_ep_rank=moe_ep_rank,
-                server_args=server_args,
-                nccl_port=port_args.nccl_port,
-                target_worker=self.tp_worker,
-                dp_rank=dp_rank,
-            )
+                self.draft_worker = PhoenixWorker(
+                    gpu_id=gpu_id,
+                    tp_rank=tp_rank,
+                    moe_ep_rank=moe_ep_rank,
+                    server_args=server_args,
+                    nccl_port=port_args.nccl_port,
+                    target_worker=self.tp_worker,
+                    dp_rank=dp_rank,
+                )
+            else:
+                # tp_worker is TpModelWorker
+
+                from sglang.srt.speculative.eagle_worker import EAGLEWorker
+
+                self.draft_worker = EAGLEWorker(
+                    gpu_id=gpu_id,
+                    tp_rank=tp_rank,
+                    moe_ep_rank=moe_ep_rank,
+                    server_args=server_args,
+                    nccl_port=port_args.nccl_port,
+                    target_worker=self.tp_worker,
+                    dp_rank=dp_rank,
+                )
         elif self.spec_algorithm.is_standalone():
             from sglang.srt.speculative.standalone_worker import StandaloneWorker
 
@@ -252,10 +268,10 @@ class Scheduler(SGLANG_Scheduler):
                 target_worker=self.tp_worker,
                 dp_rank=dp_rank,
             )
-        elif self.spec_algorithm.is_phoenix():
-            from sglang.private.speculative.phoenix_worker import PhoenixWorker
+        elif self.spec_algorithm.is_lookahead():
+            from sglang.srt.speculative.lookahead_worker import LOOKAHEADWorker
 
-            self.draft_worker = PhoenixWorker(
+            self.draft_worker = LOOKAHEADWorker(
                 gpu_id=gpu_id,
                 tp_rank=tp_rank,
                 moe_ep_rank=moe_ep_rank,
@@ -432,6 +448,17 @@ class Scheduler(SGLANG_Scheduler):
         if get_bool_env_var("SGLANG_GC_LOG"):
             configure_gc_logger()
 
+        # Init prefill kv split size when deterministic inference is enabled with flashinfer attention backend
+        if (
+            self.server_args.enable_deterministic_inference
+            and self.server_args.attention_backend == "flashinfer"
+        ):
+            self.truncation_align_size = get_int_env_var(
+                "SGLANG_FLASHINFER_PREFILL_SPLIT_TILE_SIZE", 4096
+            )
+        else:
+            self.truncation_align_size = None
+
         # Init request dispatcher
         self._request_dispatcher = TypeBasedDispatcher(
             [
@@ -446,6 +473,7 @@ class Scheduler(SGLANG_Scheduler):
                 (CloseSessionReqInput, self.close_session),
                 (UpdateWeightFromDiskReqInput, self.update_weights_from_disk),
                 (InitWeightsUpdateGroupReqInput, self.init_weights_update_group),
+                (DestroyWeightsUpdateGroupReqInput, self.destroy_weights_update_group),
                 (
                     InitWeightsSendGroupForRemoteInstanceReqInput,
                     self.init_weights_send_group_for_remote_instance,

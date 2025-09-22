@@ -2,7 +2,7 @@ from typing import Tuple
 
 import torch
 
-from sglang.private.managers.schedule_batch import ScheduleBatch
+from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker

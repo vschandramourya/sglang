@@ -8,12 +8,13 @@ class SpeculativeAlgorithm(IntEnum):
     EAGLE3 = auto()
     STANDALONE = auto()
     PHOENIX = auto()
+    LOOKAHEAD = auto()
 
     def is_none(self):
         return self == SpeculativeAlgorithm.NONE
 
     def is_eagle(self):
-        return self == SpeculativeAlgorithm.EAGLE or self == SpeculativeAlgorithm.EAGLE3
+        return self == SpeculativeAlgorithm.EAGLE or self == SpeculativeAlgorithm.EAGLE3 or self == SpeculativeAlgorithm.PHOENIX
 
     def is_eagle3(self):
         return self == SpeculativeAlgorithm.EAGLE3
@@ -24,6 +25,9 @@ class SpeculativeAlgorithm(IntEnum):
     def is_phoenix(self):
         return self == SpeculativeAlgorithm.PHOENIX
 
+    def is_lookahead(self):
+        return self == SpeculativeAlgorithm.LOOKAHEAD
+
     @staticmethod
     def from_string(name: str):
         name_map = {
@@ -31,6 +35,7 @@ class SpeculativeAlgorithm(IntEnum):
             "EAGLE3": SpeculativeAlgorithm.EAGLE3,
             "PHOENIX": SpeculativeAlgorithm.PHOENIX,
             "STANDALONE": SpeculativeAlgorithm.STANDALONE,
+            "LOOKAHEAD": SpeculativeAlgorithm.LOOKAHEAD,
             None: SpeculativeAlgorithm.NONE,
         }
         if name is not None:

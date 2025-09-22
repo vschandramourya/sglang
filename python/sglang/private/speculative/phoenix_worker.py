@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 import torch
 from huggingface_hub import snapshot_download
 
-from sglang.private.managers.schedule_batch import ScheduleBatch
+from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
     PhoenixDraftCudaGraphRunner,
 )
