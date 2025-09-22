@@ -2,6 +2,7 @@ import torch
 
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE as SGLFusedMoE
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoeWeightScaleSupported
+from sglang.srt.layers.moe.utils import should_use_flashinfer_trtllm_moe
 from sglang.srt.layers.quantization.modelopt_quant import ModelOptNvFp4FusedMoEMethod
 from sglang.srt.utils import cpu_has_amx_support, get_bool_env_var, is_cpu, is_hip
 
@@ -40,7 +41,10 @@ class FusedMoE(SGLFusedMoE):
             )
 
         # Flashinfer assumes w31 format for w13_weight. Same for the scales.
-        if self.quant_method.__class__.__name__ == "ModelOptNvFp4FusedMoEMethod":
+        if (
+            should_use_flashinfer_trtllm_moe()
+            and self.quant_method.__class__.__name__ == "ModelOptNvFp4FusedMoEMethod"
+        ):
             shard_id = {"w1": "w3", "w3": "w1", "w2": "w2"}[shard_id]
 
         WEIGHT_SCALE_SUPPORTED = [e.value for e in FusedMoeWeightScaleSupported]

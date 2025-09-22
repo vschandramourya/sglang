@@ -123,10 +123,9 @@ class PhoenixWorker(TpModelWorker):
 
         # Init draft worker
         with empty_context():
-            server_args_draft = copy.deepcopy(server_args)
-            server_args_draft.quantization = None
+            server_args.quantization = None
             super().__init__(
-                server_args=server_args_draft,
+                server_args=server_args,
                 gpu_id=gpu_id,
                 tp_rank=tp_rank,
                 pp_rank=0,  # FIXME
@@ -955,9 +954,7 @@ class PhoenixWorker(TpModelWorker):
                 batch.sampling_info.vocab_mask = None
 
         self._detect_nan_if_needed(logits_output)
-        spec_info.hidden_states = (
-            logits_output.hidden_states
-        )  # THIS IS TARGET MODEL (VERIFY) HIDDEN STATES
+        spec_info.hidden_states = logits_output.hidden_states
 
         res: EagleVerifyOutput = spec_info.verify(
             batch,
