@@ -235,8 +235,6 @@ class Scheduler(SGLANG_Scheduler):
             if self.spec_algorithm.is_phoenix():
                 from sglang.private.speculative.phoenix_worker import PhoenixWorker
 
-                # tp_worker is TpModelWorkerClient
-
                 self.draft_worker = PhoenixWorker(
                     gpu_id=gpu_id,
                     tp_rank=tp_rank,
@@ -247,8 +245,6 @@ class Scheduler(SGLANG_Scheduler):
                     dp_rank=dp_rank,
                 )
             else:
-                # tp_worker is TpModelWorker
-
                 from sglang.srt.speculative.eagle_worker import EAGLEWorker
 
                 self.draft_worker = EAGLEWorker(
