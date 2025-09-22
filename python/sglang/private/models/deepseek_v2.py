@@ -181,7 +181,9 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                 else:
 
                     tie_word_embeddings = True
-                    config_speculator_type = getattr(self.config, "speculator_type", None)
+                    config_speculator_type = getattr(
+                        self.config, "speculator_type", None
+                    )
                     if load_shared and name == "model.norm.weight":
                         log_info_on_rank0(
                             logger, f"Loading shared norm weight for MTP: {name}"
@@ -204,7 +206,11 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                         continue
 
                     # Use shared head and embed weights from target model
-                    if "shared_head.head" in name or "embed_tokens" in name and tie_word_embeddings:
+                    if (
+                        "shared_head.head" in name
+                        or "embed_tokens" in name
+                        and tie_word_embeddings
+                    ):
                         continue
 
                     is_decoder = True

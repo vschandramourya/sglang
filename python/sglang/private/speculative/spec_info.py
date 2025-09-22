@@ -14,7 +14,11 @@ class SpeculativeAlgorithm(IntEnum):
         return self == SpeculativeAlgorithm.NONE
 
     def is_eagle(self):
-        return self == SpeculativeAlgorithm.EAGLE or self == SpeculativeAlgorithm.EAGLE3 or self == SpeculativeAlgorithm.PHOENIX
+        return (
+            self == SpeculativeAlgorithm.EAGLE
+            or self == SpeculativeAlgorithm.EAGLE3
+            or self == SpeculativeAlgorithm.PHOENIX
+        )
 
     def is_eagle3(self):
         return self == SpeculativeAlgorithm.EAGLE3

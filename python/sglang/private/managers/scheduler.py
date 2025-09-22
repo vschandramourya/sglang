@@ -9,7 +9,7 @@ import torch
 import zmq
 
 from sglang.global_config import global_config
-from sglang.srt.managers.schedule_batch import ScheduleBatch
+from sglang.private.speculative.spec_info import SpeculativeAlgorithm
 
 # Import missing classes and functions
 from sglang.srt.configs.model_config import ModelConfig
@@ -55,7 +55,11 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightsFromDistributedReqInput,
     UpdateWeightsFromTensorReqInput,
 )
-from sglang.srt.managers.schedule_batch import Req, global_server_args_dict
+from sglang.srt.managers.schedule_batch import (
+    Req,
+    ScheduleBatch,
+    global_server_args_dict,
+)
 from sglang.srt.managers.schedule_policy import SchedulePolicy
 from sglang.srt.managers.scheduler import (
     EmbeddingBatchResult,
@@ -73,7 +77,6 @@ from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
 from sglang.srt.managers.utils import DPBalanceMeta
 from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.server_args import PortArgs, ServerArgs
-from sglang.private.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils import (
     configure_gc_logger,
@@ -231,7 +234,8 @@ class Scheduler(SGLANG_Scheduler):
         if self.spec_algorithm.is_eagle():
             if self.spec_algorithm.is_phoenix():
                 from sglang.private.speculative.phoenix_worker import PhoenixWorker
-                # tp_worker is TpModelWorkerClient       
+
+                # tp_worker is TpModelWorkerClient
 
                 self.draft_worker = PhoenixWorker(
                     gpu_id=gpu_id,

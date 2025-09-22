@@ -105,7 +105,6 @@ class ServerArgs(SGLANG_ServerArgs):
                     "speculative_eagle_topk > 1 with page_size > 1 is unstable and produces incorrect results for paged attention backends. This combination is only supported for the 'flashinfer' backend."
                 )
 
-
     @staticmethod
     def add_cli_args(parser: argparse.ArgumentParser):
         SGLANG_ServerArgs.add_cli_args(parser)

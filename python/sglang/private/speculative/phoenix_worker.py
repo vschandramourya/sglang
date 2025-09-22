@@ -8,7 +8,6 @@ from typing import List, Optional, Tuple
 import torch
 from huggingface_hub import snapshot_download
 
-from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
     PhoenixDraftCudaGraphRunner,
 )
@@ -23,7 +22,11 @@ from sglang.srt.distributed import (
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import get_token_ids_logprobs, get_top_logprobs
 from sglang.srt.managers.mm_utils import embed_mm_inputs
-from sglang.srt.managers.schedule_batch import get_last_loc, global_server_args_dict
+from sglang.srt.managers.schedule_batch import (
+    ScheduleBatch,
+    get_last_loc,
+    global_server_args_dict,
+)
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,

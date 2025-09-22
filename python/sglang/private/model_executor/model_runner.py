@@ -1,12 +1,15 @@
 import logging
+
 import torch
+
 from sglang.srt.model_executor.model_runner import ModelRunner as SGLANG_ModelRunner
-from sglang.srt.server_args import ServerArgs
 from sglang.srt.model_executor.model_runner import add_mla_attention_backend
+from sglang.srt.server_args import ServerArgs
 
 logger = logging.getLogger(__name__)
 
 add_mla_attention_backend("trtllm_mla_tgl")
+
 
 class ModelRunner(SGLANG_ModelRunner):
 
@@ -21,6 +24,7 @@ class ModelRunner(SGLANG_ModelRunner):
             )
             try:
                 from tore_tree import SuffixCache
+
                 self.suffix_cache = SuffixCache(
                     max_depth=server_args.suffix_cache_max_depth,
                     ratio=server_args.suffix_cache_ratio,
