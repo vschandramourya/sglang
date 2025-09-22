@@ -179,16 +179,38 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
                             ):
                                 continue
                 else:
+
+                    tie_word_embeddings = True
+                    config_speculator_type = getattr(
+                        self.config, "speculator_type", None
+                    )
                     if load_shared and name == "model.norm.weight":
                         log_info_on_rank0(
                             logger, f"Loading shared norm weight for MTP: {name}"
                         )
                         name = "model.shared_head.norm.weight"
+                    elif config_speculator_type == "phoenix":
+                        # For phoenix, we have different weight and we need to handle this differently
+                        if name in {"eh_proj.weight", "enorm.weight", "hnorm.weight"}:
+                            original_name = name
+                            name = f"{nextn_layer_prefix}." + name
+                            logger.info(
+                                f"Phoenix: remap top-level nextn-spec: {original_name} -> {name}"
+                            )
+                        # for eagle, it is always tie_word_embeddings, however for phoenix, it depends on the config tie_word_embeddings
+                        tie_word_embeddings = self.config.tie_word_embeddings
+                        if name == "model.norm.weight":
+                            name = "model.shared_head.norm.weight"
+                            logger.info(f"Phoenix: rename model.norm.weight to {name}")
                     elif not name.startswith(nextn_layer_prefix):
                         continue
 
                     # Use shared head and embed weights from target model
-                    if "shared_head.head" in name or "embed_tokens" in name:
+                    if (
+                        "shared_head.head" in name
+                        or "embed_tokens" in name
+                        and tie_word_embeddings
+                    ):
                         continue
 
                     is_decoder = True
