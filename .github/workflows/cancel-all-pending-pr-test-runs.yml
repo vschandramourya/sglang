@@ -22,7 +22,7 @@ jobs:
 
       - name: Cancel all pending/waiting runs for specified workflows
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_FOR_CODE_SYNC_FROM_LIANMIN }}
           REPO: ${{ github.repository }}
         run: |
           # Read the space-separated string from the input into a bash array
