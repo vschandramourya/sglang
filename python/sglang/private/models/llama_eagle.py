@@ -207,7 +207,6 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
         # check if speculator_type key exists, and if it's eq. to 'phoenix'. If no for either, then use eagle weight loading
         self.config_speculator_type = getattr(config, "speculator_type", None)
         if self.config_speculator_type == "phoenix":
-            print("Using Phoenix model architecture and weight loading...")
             self.model = LlamaModelPhoenix(
                 config, quant_config=quant_config, prefix=add_prefix("model", prefix)
             )
@@ -220,7 +219,6 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
         if self.config.tie_word_embeddings:
             self.lm_head = self.model.embed_tokens
         else:
-            print("Not tying word embeddings...")
             self.lm_head = ParallelLMHead(
                 getattr(config, "hot_vocab_size", config.vocab_size),
                 config.hidden_size,
@@ -261,11 +259,9 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
 
         # Configure model based on checkpoint
         if not has_norm:
-            print("No model.norm found in checkpoint, setting to None...")
             self.model.norm = None
 
         if not has_input_layernorm:
-            print("No model.layers.0.input_layernorm found in checkpoint, skipping...")
             # Skip input_layernorm for layer 0 if not in checkpoint
             if hasattr(self.model.layers[0], "input_layernorm"):
                 delattr(self.model.layers[0], "input_layernorm")
@@ -275,7 +271,6 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
         loaded_count = 0
         for name, loaded_weight in weights_list:
             if "lm_head" in name:
-                print("Loading lm_head weights directly from checkpoint...")
                 # Load lm_head weights directly if present in checkpoint
                 super().load_weights([(name, loaded_weight)])
             else:

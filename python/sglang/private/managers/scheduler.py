@@ -540,11 +540,7 @@ class Scheduler(SGLANG_Scheduler):
                     accept_length_per_req_cpu,
                 ) = self.draft_worker.forward_batch_speculative_generation(batch)
                 # handle suffix tree update
-                if (
-                    self.server_args.enable_suffix_decoding
-                    # and get_tensor_model_parallel_rank() == 0
-                    # and (self.pp_group.world_size == 1 or self.pp_group.is_last_rank)
-                ):
+                if self.server_args.enable_suffix_decoding:
                     self.tp_worker.model_runner.update_suffix_cache_from_scheduler(
                         batch, next_token_ids, accept_length_per_req_cpu
                     )

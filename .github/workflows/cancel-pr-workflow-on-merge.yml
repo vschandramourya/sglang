@@ -17,6 +17,6 @@ jobs:
         uses: styfle/cancel-workflow-action@0.12.1
         with:
           workflow_id: all
-          access_token: ${{ secrets.GITHUB_TOKEN }}
+          access_token: ${{ secrets.PAT_FOR_CODE_SYNC_FROM_LIANMIN }}
           ignore_sha: true
           pr_number: ${{ github.event.pull_request.number }}
