@@ -221,6 +221,8 @@ class PhoenixWorker(TpModelWorker):
         if backend_type not in backend_map:
             raise ValueError(error_template.format(backend_type=backend_type))
 
+        print("backend_name:", backend_name, backend_type)
+        print("backend_name:", backend_name, backend_type)
         return backend_map[backend_type]()
 
     def _create_decode_backend(self):
@@ -907,6 +909,10 @@ class PhoenixWorker(TpModelWorker):
 
         return score_list, token_list, parents_list
 
+    def clear_cache_pool(self):
+        self.model_runner.req_to_token_pool.clear()
+        self.model_runner.token_to_kv_pool_allocator.clear()
+        
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.return_hidden_states = False
