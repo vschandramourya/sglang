@@ -127,6 +127,7 @@ class PhoenixWorker(TpModelWorker):
         # Init draft worker
         with empty_context():
             server_args.quantization = None
+            server_args.attention_backend = "flashinfer"
             super().__init__(
                 server_args=server_args,
                 gpu_id=gpu_id,
@@ -1129,10 +1130,11 @@ class PhoenixWorker(TpModelWorker):
             batch = batch.copy()
             batch.prepare_for_idle()
             hidden_size = (
-                self.model_config.hidden_size * 3
-                if self.speculative_algorithm.is_eagle3()
-                else self.model_config.hidden_size
+                self.model_config.target_hidden_size
+                if self.is_phoenix
+                else (self.model_config.hidden_size * 3 if self.speculative_algorithm.is_eagle3() else self.model_config.hidden_size)
             )
+            print(f"Switch to idle draft extend. hidden size={hidden_size}")
             batch.spec_info = EagleDraftInput.create_idle_input(
                 device=self.device,
                 hidden_size=hidden_size,

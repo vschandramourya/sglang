@@ -29,11 +29,17 @@ class ModelRunner(SGLANG_ModelRunner):
                     max_depth=server_args.suffix_cache_max_depth,
                     ratio=server_args.suffix_cache_ratio,
                 )
-            except ImportError as e:
-                print(
-                    "Error: tore_tree is not installed. Please checkout https://github.com/togethercomputer/tore-tree and install it with: pip install -e ."
+            except (ModuleNotFoundError, ImportError):
+                raise RuntimeError(
+                    "\n=== Missing dependency: tore_tree ===\n"
+                    "This feature requires the `tore-tree` library.\n\n"
+                    "Please install it with one of the following commands:\n"
+                    "for a local clone:\n"
+                    "  git clone git@github.com:togethercomputer/tore-tree.git\n"
+                    "  cd tore-tree\n"
+                    "  pip install -e .\n"
+                    "======================================\n"
                 )
-                raise e
 
     def generate_suffix_draft_tokens(self, schedule_batch, last_token_ids) -> list:
         """Generate draft tokens using suffix tree speculation."""
@@ -47,10 +53,11 @@ class ModelRunner(SGLANG_ModelRunner):
             and not schedule_batch.forward_mode.is_decode()
         ):
             return []
-
+   
         results = []
         for req_idx, req in enumerate(schedule_batch.reqs):
             req_id = req.rid
+            print(f"DEBUG: Processing req {req_idx}, rid={req_id}, output_len={len(req.output_ids)}, origin_len={len(req.origin_input_ids)}")
 
             # Check if prompt is cached, if not cache it first
             if not self.suffix_cache.has_cached_prompt(req_id):
@@ -80,6 +87,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 if hasattr(recent_tokens, "tolist")
                 else list(recent_tokens)
             )
+            print(f"DEBUG: req {req_idx} pattern length={len(pattern)}, last_token={last_token_for_req}")
 
             # Speculate tokens
             max_spec_tokens = min(
@@ -94,6 +102,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 max_spec_offset=self.server_args.suffix_max_spec_offset,
                 min_token_prob=self.server_args.suffix_min_token_prob,
             )
+            # print(f"DEBUG: req_idx={req_idx}, req_id={req_id}, result.score={getattr(result, 'score', 'N/A')}, result.token_ids={getattr(result, 'token_ids', 'N/A')}")
             results.append(result)
 
         return results
@@ -139,3 +148,17 @@ class ModelRunner(SGLANG_ModelRunner):
             if len(req_tokens) > 0:
                 req_probs = [1.0] * len(req_tokens)
                 self.suffix_cache.update_response(req_id, req_tokens, req_probs)
+
+    def cleanup_finished_requests_suffix_cache(self, finished_request_ids):
+        """Clean up suffix cache for finished requests to prevent memory leaks and state corruption."""
+        if self.suffix_cache is None:
+            return
+        
+        for req_id in finished_request_ids:
+            try:
+                if self.suffix_cache.has_cached_prompt(req_id):
+                    self.suffix_cache.evict_prompt(req_id)
+                # Note: Global suffix tree entries are kept for future speculation
+            except ValueError:
+                # Request may have already been evicted
+                pass

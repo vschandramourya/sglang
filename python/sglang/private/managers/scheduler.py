@@ -542,8 +542,8 @@ class Scheduler(SGLANG_Scheduler):
                 # handle suffix tree update
                 if (
                     self.server_args.enable_suffix_decoding
-                    and get_tensor_model_parallel_rank() == 0
-                    and (self.pp_group.world_size == 1 or self.pp_group.is_last_rank)
+                    # and get_tensor_model_parallel_rank() == 0
+                    # and (self.pp_group.world_size == 1 or self.pp_group.is_last_rank)
                 ):
                     self.tp_worker.model_runner.update_suffix_cache_from_scheduler(
                         batch, next_token_ids, accept_length_per_req_cpu
