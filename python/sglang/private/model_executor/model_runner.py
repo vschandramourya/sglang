@@ -29,11 +29,17 @@ class ModelRunner(SGLANG_ModelRunner):
                     max_depth=server_args.suffix_cache_max_depth,
                     ratio=server_args.suffix_cache_ratio,
                 )
-            except ImportError as e:
-                print(
-                    "Error: tore_tree is not installed. Please checkout https://github.com/togethercomputer/tore-tree and install it with: pip install -e ."
+            except (ModuleNotFoundError, ImportError):
+                raise RuntimeError(
+                    "\n=== Missing dependency: tore_tree ===\n"
+                    "This feature requires the `tore-tree` library.\n\n"
+                    "Please install it with one of the following commands:\n"
+                    "for a local clone:\n"
+                    "  git clone git@github.com:togethercomputer/tore-tree.git\n"
+                    "  cd tore-tree\n"
+                    "  pip install -e .\n"
+                    "======================================\n"
                 )
-                raise e
 
     def generate_suffix_draft_tokens(self, schedule_batch, last_token_ids) -> list:
         """Generate draft tokens using suffix tree speculation."""

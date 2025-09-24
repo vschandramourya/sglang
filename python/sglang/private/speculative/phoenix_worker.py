@@ -1129,9 +1129,13 @@ class PhoenixWorker(TpModelWorker):
             batch = batch.copy()
             batch.prepare_for_idle()
             hidden_size = (
-                self.model_config.hidden_size * 3
-                if self.speculative_algorithm.is_eagle3()
-                else self.model_config.hidden_size
+                self.model_config.target_hidden_size
+                if self.is_phoenix
+                else (
+                    self.model_config.hidden_size * 3
+                    if self.speculative_algorithm.is_eagle3()
+                    else self.model_config.hidden_size
+                )
             )
             batch.spec_info = EagleDraftInput.create_idle_input(
                 device=self.device,

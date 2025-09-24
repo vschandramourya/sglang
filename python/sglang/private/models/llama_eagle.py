@@ -140,7 +140,7 @@ class LlamaModelPhoenix(nn.Module):
                 for i in range(config.num_hidden_layers)
             ]
         )
-        self.fc = torch.nn.Linear(
+        self.eh_proj = torch.nn.Linear(
             config.hidden_size + config.target_hidden_size, config.hidden_size
         )
         # Add norm layer - will be set to None if not in checkpoint (handled in phoenixload_weights)
@@ -170,7 +170,7 @@ class LlamaModelPhoenix(nn.Module):
             )
 
         # forward_batch.spec_info.hidden_states is the target model hidden states
-        hidden_states = self.fc(
+        hidden_states = self.eh_proj(
             torch.cat((hidden_states, forward_batch.spec_info.hidden_states), dim=-1)
         )
         residual = None
@@ -252,9 +252,9 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
 
         # Check what weights exist in checkpoint, and set model.norm and input_layernorm
         weight_names = [name for name, _ in weights_list]
-        has_norm = any("norm.weight" in name for name in weight_names)
+        has_norm = any("model.norm.weight" in name for name in weight_names)
         has_input_layernorm = any(
-            "layers.0.input_layernorm" in name for name in weight_names
+            "model.layers.0.input_layernorm" in name for name in weight_names
         )
 
         # Configure model based on checkpoint
@@ -275,7 +275,10 @@ class LlamaForCausalLMEagle(LlamaForCausalLM):
                 super().load_weights([(name, loaded_weight)])
             else:
                 # Prefix other weights with "model."
-                prefixed_name = "model." + name
+                if "eh_proj" in name:
+                    prefixed_name = "model." + name
+                else:
+                    prefixed_name = name
                 super().load_weights([(prefixed_name, loaded_weight)])
             loaded_count += 1
 
