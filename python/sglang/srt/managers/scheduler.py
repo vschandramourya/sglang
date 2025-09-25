@@ -259,7 +259,7 @@ class Scheduler(
         self.enable_metrics_for_all_schedulers = (
             server_args.enable_metrics_for_all_schedulers
         )
-        self.enable_kv_cache_events = server_args.kv_events_config is not None
+        self.enable_kv_cache_events = server_args.kv_events_config and tp_rank == 0
         self.stream_interval = server_args.stream_interval
         self.spec_algorithm = SpeculativeAlgorithm.from_string(
             server_args.speculative_algorithm
@@ -553,8 +553,10 @@ class Scheduler(
 
         # Init metrics stats
         self.init_metrics(tp_rank, pp_rank, dp_rank)
-        self.init_kv_events(server_args.kv_events_config)
         self.init_dp_balance(dp_balance_meta)
+
+        if self.enable_kv_cache_events:
+            self.init_kv_events(server_args.kv_events_config)
 
         # Init disaggregation
         self.disaggregation_mode = DisaggregationMode(
@@ -565,16 +567,8 @@ class Scheduler(
         if get_bool_env_var("SGLANG_GC_LOG"):
             configure_gc_logger()
 
-        # Init prefill kv split size when deterministic inference is enabled with flashinfer attention backend
-        if (
-            self.server_args.enable_deterministic_inference
-            and self.server_args.attention_backend == "flashinfer"
-        ):
-            self.truncation_align_size = get_int_env_var(
-                "SGLANG_FLASHINFER_PREFILL_SPLIT_TILE_SIZE", 4096
-            )
-        else:
-            self.truncation_align_size = None
+        # Init prefill kv split size when deterministic inference is enabled with various attention backends
+        self.init_deterministic_inference_config()
 
         # Init request dispatcher
         self._request_dispatcher = TypeBasedDispatcher(
@@ -619,6 +613,23 @@ class Scheduler(
                 (MultiTokenizerRegisterReq, self.register_multi_tokenizer),
                 (GetLoadReqInput, self.get_load),
             ]
+        )
+
+    def init_deterministic_inference_config(self):
+        """Initialize deterministic inference configuration for different attention backends."""
+        if not self.server_args.enable_deterministic_inference:
+            self.truncation_align_size = None
+            return
+
+        backend_sizes = {
+            "flashinfer": ("SGLANG_FLASHINFER_PREFILL_SPLIT_TILE_SIZE", 4096),
+            "triton": ("SGLANG_TRITON_PREFILL_TRUNCATION_ALIGN_SIZE", 4096),
+        }
+        env_var, default_size = backend_sizes.get(
+            self.server_args.attention_backend, (None, None)
+        )
+        self.truncation_align_size = (
+            get_int_env_var(env_var, default_size) if env_var else None
         )
 
     def init_tokenizer(self):
@@ -2286,8 +2297,9 @@ class Scheduler(
     def set_next_batch_sampling_info_done(self, batch: ScheduleBatch):
         if batch.next_batch_sampling_info:
             if batch.next_batch_sampling_info.grammars is not None:
-                batch.next_batch_sampling_info.update_regex_vocab_mask()
-                self.current_stream.synchronize()
+                if self.disaggregation_mode != DisaggregationMode.PREFILL:
+                    batch.next_batch_sampling_info.update_regex_vocab_mask()
+                    self.current_stream.synchronize()
             batch.next_batch_sampling_info.sampling_info_done.set()
 
     def watchdog_thread(self):

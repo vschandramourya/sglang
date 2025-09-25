@@ -919,7 +919,7 @@ class PhoenixWorker(TpModelWorker):
     def clear_cache_pool(self):
         self.model_runner.req_to_token_pool.clear()
         self.model_runner.token_to_kv_pool_allocator.clear()
-
+        
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.return_hidden_states = False
@@ -1144,9 +1144,12 @@ class PhoenixWorker(TpModelWorker):
             hidden_size = (
                 self.model_config.target_hidden_size
                 if self.is_phoenix
-                else (self.model_config.hidden_size * 3 if self.speculative_algorithm.is_eagle3() else self.model_config.hidden_size)
+                else (
+                    self.model_config.hidden_size * 3
+                    if self.speculative_algorithm.is_eagle3()
+                    else self.model_config.hidden_size
+                )
             )
-            print(f"Switch to idle draft extend. hidden size={hidden_size}")
             batch.spec_info = EagleDraftInput.create_idle_input(
                 device=self.device,
                 hidden_size=hidden_size,

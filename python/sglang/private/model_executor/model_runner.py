@@ -53,12 +53,10 @@ class ModelRunner(SGLANG_ModelRunner):
             and not schedule_batch.forward_mode.is_decode()
         ):
             return []
-   
+
         results = []
         for req_idx, req in enumerate(schedule_batch.reqs):
             req_id = req.rid
-            # print(f"DEBUG: Processing req {req_idx}, rid={req_id}, output_len={len(req.output_ids)}, origin_len={len(req.origin_input_ids)}")
-            
             # Check if prompt is cached, if not cache it first
             has_cached = self.suffix_cache.has_cached_prompt(req_id)
             # print(f"DEBUG: req {req_id} has_cached_prompt={has_cached}")
@@ -91,7 +89,6 @@ class ModelRunner(SGLANG_ModelRunner):
                 if hasattr(recent_tokens, "tolist")
                 else list(recent_tokens)
             )
-            # print(f"DEBUG: req {req_idx} pattern length={len(pattern)}, last_token={last_token_for_req}")
 
             # Speculate tokens
             max_spec_tokens = min(
@@ -107,7 +104,6 @@ class ModelRunner(SGLANG_ModelRunner):
                 min_token_prob=self.server_args.suffix_min_token_prob,
                 use_cached_prompt=False,
             )
-            # print(f"DEBUG: req_idx={req_idx}, req_id={req_id}, pattern_len={len(pattern)}, result.score={getattr(result, 'score', 'N/A')}, result.token_ids={getattr(result, 'token_ids', 'N/A')[:5]}...")
             results.append(result)
 
         return results
@@ -153,17 +149,3 @@ class ModelRunner(SGLANG_ModelRunner):
             if len(req_tokens) > 0:
                 req_probs = [1.0] * len(req_tokens)
                 self.suffix_cache.update_response(req_id, req_tokens, req_probs)
-
-    def cleanup_finished_requests_suffix_cache(self, finished_request_ids):
-        """Clean up suffix cache for finished requests to prevent memory leaks and state corruption."""
-        if self.suffix_cache is None:
-            return
-        
-        for req_id in finished_request_ids:
-            try:
-                if self.suffix_cache.has_cached_prompt(req_id):
-                    self.suffix_cache.evict_prompt(req_id)
-                # Note: Global suffix tree entries are kept for future speculation
-            except ValueError:
-                # Request may have already been evicted
-                pass
