@@ -57,14 +57,18 @@ class ModelRunner(SGLANG_ModelRunner):
         results = []
         for req_idx, req in enumerate(schedule_batch.reqs):
             req_id = req.rid
-            print(f"DEBUG: Processing req {req_idx}, rid={req_id}, output_len={len(req.output_ids)}, origin_len={len(req.origin_input_ids)}")
-
+            # print(f"DEBUG: Processing req {req_idx}, rid={req_id}, output_len={len(req.output_ids)}, origin_len={len(req.origin_input_ids)}")
+            
             # Check if prompt is cached, if not cache it first
-            if not self.suffix_cache.has_cached_prompt(req_id):
+            has_cached = self.suffix_cache.has_cached_prompt(req_id)
+            # print(f"DEBUG: req {req_id} has_cached_prompt={has_cached}")
+            
+            if not has_cached:
                 # Cache the prompt with dummy probabilities
                 prompt_token_ids = req.origin_input_ids
                 prompt_probs = [1.0] * len(prompt_token_ids)
                 self.suffix_cache.cache_prompt(req_id, prompt_token_ids, prompt_probs)
+                # print(f"DEBUG: Cached new prompt for req {req_id}, prompt_len={len(prompt_token_ids)}")
 
             # Build pattern from recent tokens - FIX: use the correct last_token for this request
             max_depth = self.server_args.suffix_cache_max_depth
@@ -87,7 +91,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 if hasattr(recent_tokens, "tolist")
                 else list(recent_tokens)
             )
-            print(f"DEBUG: req {req_idx} pattern length={len(pattern)}, last_token={last_token_for_req}")
+            # print(f"DEBUG: req {req_idx} pattern length={len(pattern)}, last_token={last_token_for_req}")
 
             # Speculate tokens
             max_spec_tokens = min(
@@ -101,8 +105,9 @@ class ModelRunner(SGLANG_ModelRunner):
                 max_spec_factor=self.server_args.suffix_max_spec_factor,
                 max_spec_offset=self.server_args.suffix_max_spec_offset,
                 min_token_prob=self.server_args.suffix_min_token_prob,
+                use_cached_prompt=False,
             )
-            # print(f"DEBUG: req_idx={req_idx}, req_id={req_id}, result.score={getattr(result, 'score', 'N/A')}, result.token_ids={getattr(result, 'token_ids', 'N/A')}")
+            # print(f"DEBUG: req_idx={req_idx}, req_id={req_id}, pattern_len={len(pattern)}, result.score={getattr(result, 'score', 'N/A')}, result.token_ids={getattr(result, 'token_ids', 'N/A')[:5]}...")
             results.append(result)
 
         return results

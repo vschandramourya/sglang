@@ -109,6 +109,12 @@ class PhoenixWorker(TpModelWorker):
             target_worker.get_memory_pool()
         )
 
+        # self.token_to_kv_pool_allocator._kvcache.head_num = 4
+        # self.token_to_kv_pool_allocator._kvcache.head_dim = 128
+
+        # print("self.token_to_kv_pool_allocator._kvcache:", self.token_to_kv_pool_allocator._kvcache.head_num)
+        # print("self.token_to_kv_pool_allocator._kvcache:", self.token_to_kv_pool_allocator._kvcache.head_dim)
+        
         # Load hot token ids
         if self.speculative_algorithm.is_eagle3():
             if server_args.speculative_token_map is not None:
@@ -127,7 +133,7 @@ class PhoenixWorker(TpModelWorker):
         # Init draft worker
         with empty_context():
             server_args.quantization = None
-            server_args.attention_backend = "flashinfer"
+            # server_args.attention_backend = "triton"
             super().__init__(
                 server_args=server_args,
                 gpu_id=gpu_id,
@@ -222,6 +228,8 @@ class PhoenixWorker(TpModelWorker):
         if backend_type not in backend_map:
             raise ValueError(error_template.format(backend_type=backend_type))
 
+        print("backend_name:", backend_name, backend_type)
+        print("backend_name:", backend_name, backend_type)
         return backend_map[backend_type]()
 
     def _create_decode_backend(self):
@@ -907,6 +915,10 @@ class PhoenixWorker(TpModelWorker):
                 hidden_states = logits_output.hidden_states
 
         return score_list, token_list, parents_list
+
+    def clear_cache_pool(self):
+        self.model_runner.req_to_token_pool.clear()
+        self.model_runner.token_to_kv_pool_allocator.clear()
 
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
         spec_info.prepare_for_verify(batch, self.page_size)
