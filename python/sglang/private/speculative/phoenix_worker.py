@@ -127,7 +127,6 @@ class PhoenixWorker(TpModelWorker):
         # Init draft worker
         with empty_context():
             server_args.quantization = None
-            # server_args.attention_backend = "triton"
             super().__init__(
                 server_args=server_args,
                 gpu_id=gpu_id,
@@ -222,8 +221,6 @@ class PhoenixWorker(TpModelWorker):
         if backend_type not in backend_map:
             raise ValueError(error_template.format(backend_type=backend_type))
 
-        print("backend_name:", backend_name, backend_type)
-        print("backend_name:", backend_name, backend_type)
         return backend_map[backend_type]()
 
     def _create_decode_backend(self):
