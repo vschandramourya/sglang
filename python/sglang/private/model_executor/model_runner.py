@@ -59,14 +59,12 @@ class ModelRunner(SGLANG_ModelRunner):
             req_id = req.rid
             # Check if prompt is cached, if not cache it first
             has_cached = self.suffix_cache.has_cached_prompt(req_id)
-            # print(f"DEBUG: req {req_id} has_cached_prompt={has_cached}")
-            
+
             if not has_cached:
                 # Cache the prompt with dummy probabilities
                 prompt_token_ids = req.origin_input_ids
                 prompt_probs = [1.0] * len(prompt_token_ids)
                 self.suffix_cache.cache_prompt(req_id, prompt_token_ids, prompt_probs)
-                # print(f"DEBUG: Cached new prompt for req {req_id}, prompt_len={len(prompt_token_ids)}")
 
             # Build pattern from recent tokens - FIX: use the correct last_token for this request
             max_depth = self.server_args.suffix_cache_max_depth

@@ -109,12 +109,6 @@ class PhoenixWorker(TpModelWorker):
             target_worker.get_memory_pool()
         )
 
-        # self.token_to_kv_pool_allocator._kvcache.head_num = 4
-        # self.token_to_kv_pool_allocator._kvcache.head_dim = 128
-
-        # print("self.token_to_kv_pool_allocator._kvcache:", self.token_to_kv_pool_allocator._kvcache.head_num)
-        # print("self.token_to_kv_pool_allocator._kvcache:", self.token_to_kv_pool_allocator._kvcache.head_dim)
-        
         # Load hot token ids
         if self.speculative_algorithm.is_eagle3():
             if server_args.speculative_token_map is not None:
@@ -919,7 +913,7 @@ class PhoenixWorker(TpModelWorker):
     def clear_cache_pool(self):
         self.model_runner.req_to_token_pool.clear()
         self.model_runner.token_to_kv_pool_allocator.clear()
-        
+
     def verify(self, batch: ScheduleBatch, spec_info: EagleVerifyInput):
         spec_info.prepare_for_verify(batch, self.page_size)
         batch.return_hidden_states = False
