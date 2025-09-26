@@ -57,9 +57,10 @@ class ModelRunner(SGLANG_ModelRunner):
         results = []
         for req_idx, req in enumerate(schedule_batch.reqs):
             req_id = req.rid
-
             # Check if prompt is cached, if not cache it first
-            if not self.suffix_cache.has_cached_prompt(req_id):
+            has_cached = self.suffix_cache.has_cached_prompt(req_id)
+
+            if not has_cached:
                 # Cache the prompt with dummy probabilities
                 prompt_token_ids = req.origin_input_ids
                 prompt_probs = [1.0] * len(prompt_token_ids)
@@ -99,6 +100,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 max_spec_factor=self.server_args.suffix_max_spec_factor,
                 max_spec_offset=self.server_args.suffix_max_spec_offset,
                 min_token_prob=self.server_args.suffix_min_token_prob,
+                use_cached_prompt=False,
             )
             results.append(result)
 
