@@ -92,7 +92,7 @@ class DeepSeekV31Detector(BaseFormatDetector):
         self, new_text: str, tools: List[Tool]
     ) -> StreamingParseResult:
         """
-        Streaming incremental parsing tool calls for DeepSeekV3.1 format.
+        Streaming incremental parsing tool calls for DeepSeekV3 format.
         """
         self._buffer += new_text
         current_text = self._buffer
@@ -104,12 +104,7 @@ class DeepSeekV31Detector(BaseFormatDetector):
 
         if not has_tool_call:
             self._buffer = ""
-            # Filter out tool-related tokens from normal text for V3.1 format
-            for e_token in [
-                self.eot_token,
-                "<｜tool▁call▁end｜>",
-                "<｜end▁of▁sentence｜>",
-            ]:
+            for e_token in [self.eot_token, "<｜tool▁call▁end｜>"]:
                 if e_token in new_text:
                     new_text = new_text.replace(e_token, "")
             return StreamingParseResult(normal_text=new_text)
@@ -119,24 +114,14 @@ class DeepSeekV31Detector(BaseFormatDetector):
 
         calls: list[ToolCallItem] = []
         try:
-            # Check for any tool call pattern - prioritize more specific matches
-            tool_call_match = re.search(
-                pattern=r"<｜tool▁call▁begin｜>(.*?)(?:<｜tool▁sep｜>(.*?))?(?:<｜tool▁call▁end｜>)?",
+            partial_match = re.search(
+                pattern=r"<｜tool▁call▁begin｜>(.*)<｜tool▁sep｜>(.*)<｜tool▁call▁end｜>",
                 string=current_text,
                 flags=re.DOTALL,
             )
-
-            if tool_call_match:
-                func_name = (
-                    tool_call_match.group(1).strip() if tool_call_match.group(1) else ""
-                )
-                func_args_raw = (
-                    tool_call_match.group(2).strip() if tool_call_match.group(2) else ""
-                )
-
-                # Check if we have a structurally complete tool call (with end tag)
-                is_structurally_complete = "<｜tool▁call▁end｜>" in current_text
-                has_separator = "<｜tool▁sep｜>" in current_text
+            if partial_match:
+                func_name = partial_match.group(1).strip()
+                func_args_raw = partial_match.group(2).strip()
 
                 # Initialize state if this is the first tool call
                 if self.current_tool_id == -1:
@@ -150,8 +135,7 @@ class DeepSeekV31Detector(BaseFormatDetector):
                 while len(self.streamed_args_for_tool) <= self.current_tool_id:
                     self.streamed_args_for_tool.append("")
 
-                # Send function name if we have it and separator (don't wait for complete structure)
-                if func_name and has_separator and not self.current_tool_name_sent:
+                if not self.current_tool_name_sent:
                     calls.append(
                         ToolCallItem(
                             tool_index=self.current_tool_id,
@@ -160,13 +144,12 @@ class DeepSeekV31Detector(BaseFormatDetector):
                         )
                     )
                     self.current_tool_name_sent = True
+                    # Store the tool call info for serving layer completions endpoint
                     self.prev_tool_call_arr[self.current_tool_id] = {
                         "name": func_name,
                         "arguments": {},
                     }
-
-                # Handle argument streaming if we have arguments
-                if func_args_raw and has_separator:
+                else:
                     argument_diff = (
                         func_args_raw[len(self._last_arguments) :]
                         if func_args_raw.startswith(self._last_arguments)
@@ -186,12 +169,8 @@ class DeepSeekV31Detector(BaseFormatDetector):
                             self.current_tool_id
                         ] += argument_diff
 
-                # Handle completion: either JSON is complete OR structure is complete
-                should_complete = False
-                if is_structurally_complete:
-                    # Structure is complete, check if JSON is valid
-                    if func_args_raw and _is_complete_json(func_args_raw):
-                        # Update stored arguments with valid JSON
+                    if _is_complete_json(func_args_raw):
+                        # Update the stored arguments
                         try:
                             parsed_args = json.loads(func_args_raw)
                             self.prev_tool_call_arr[self.current_tool_id][
@@ -199,33 +178,25 @@ class DeepSeekV31Detector(BaseFormatDetector):
                             ] = parsed_args
                         except json.JSONDecodeError:
                             pass
-                    should_complete = True
-                elif (
-                    func_args_raw
-                    and _is_complete_json(func_args_raw)
-                    and not is_structurally_complete
-                ):
-                    # JSON is complete but structure isn't - keep streaming for more content
-                    should_complete = False
 
-                if should_complete:
-                    # Remove the completed tool call from buffer
-                    end_match = re.search(
-                        r"<｜tool▁call▁begin｜>.*?<｜tool▁call▁end｜>",
-                        current_text,
-                        re.DOTALL,
-                    )
-                    if end_match:
-                        self._buffer = current_text[end_match.end() :]
-                    else:
-                        # Fallback: clear buffer if we can't find exact match
-                        self._buffer = ""
+                        # Find the end of the current tool call and remove only that part from buffer
+                        tool_call_end_pattern = (
+                            r"<｜tool▁call▁begin｜>.*?<｜tool▁call▁end｜>"
+                        )
+                        match = re.search(
+                            tool_call_end_pattern, current_text, re.DOTALL
+                        )
+                        if match:
+                            # Remove the completed tool call from buffer, keep any remaining content
+                            self._buffer = current_text[match.end() :]
+                        else:
+                            self._buffer = ""
 
-                    result = StreamingParseResult(normal_text="", calls=calls)
-                    self.current_tool_id += 1
-                    self._last_arguments = ""
-                    self.current_tool_name_sent = False
-                    return result
+                        result = StreamingParseResult(normal_text="", calls=calls)
+                        self.current_tool_id += 1
+                        self._last_arguments = ""
+                        self.current_tool_name_sent = False
+                        return result
 
             return StreamingParseResult(normal_text="", calls=calls)
 
