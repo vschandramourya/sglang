@@ -268,7 +268,7 @@ class Scheduler(SGLANG_Scheduler):
                 target_worker=self.tp_worker,
                 dp_rank=dp_rank,
             )
-        elif self.spec_algorithm.is_lookahead():
+        elif self.spec_algorithm.is_ngram():
             from sglang.srt.speculative.lookahead_worker import LOOKAHEADWorker
 
             self.draft_worker = LOOKAHEADWorker(
