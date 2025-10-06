@@ -15,8 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  nightly-test:
-    if: github.repository == 'sgl-project/sglang' || github.event_name == 'pull_request'
+  nightly-test-perf-text-models:
     runs-on: 2-gpu-runner
     steps:
       - name: Checkout code
@@ -26,8 +25,47 @@ jobs:
         run: |
           bash scripts/ci/ci_install_dependency.sh
 
-      - name: Run test
-        timeout-minutes: 120
+      - name: Run performance test for text models
+        timeout-minutes: 180
+        env:
+          TRACE_BASE_URL: ${{ vars.PERFETTO_TRACE_BASE_URL }}/${{ github.run_id }}
+          PERFETTO_RELAY_URL: ${{ vars.PERFETTO_RELAY_URL }}
         run: |
-          cd test/srt
-          python3 run_suite.py --suite nightly --timeout-per-file 3600
+          rm -rf test/tgl/performance_profiles_text_models/
+          python3 test/tgl/test_nightly_text_models_perf.py
+
+      - name: Publish traces to storage repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_FOR_NIGHTLY_CI }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 scripts/ci/publish_traces.py
+
+
+  nightly-test-perf-vlms:
+    runs-on: 1-gpu-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run perf test for VLM models (MMMU)
+        timeout-minutes: 240
+        env:
+          TRACE_BASE_URL: ${{ vars.PERFETTO_TRACE_BASE_URL }}/${{ github.run_id }}
+          PERFETTO_RELAY_URL: ${{ vars.PERFETTO_RELAY_URL }}
+        run: |
+          rm -rf test/tgl/performance_profiles_vlms/
+          python3 test/tgl/test_nightly_vlms_perf.py
+
+      - name: Publish traces to storage repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_FOR_NIGHTLY_CI }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 scripts/ci/publish_traces.py --vlm
