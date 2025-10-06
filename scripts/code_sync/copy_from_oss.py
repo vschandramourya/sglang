@@ -59,6 +59,10 @@ folder_names = [
     "README.md",
 ]
 
+folder_names_for_sgl_router = [
+    "sgl-router",
+]
+
 private_repo = "togethercomputer/tgl"
 # --- Configuration End ---
 
@@ -251,7 +255,16 @@ def main():
         action="store_true",
         help="Dry run the script without executing git, rsync, or gh commands.",
     )
+    parser.add_argument(
+        "--sync-sgl-router",
+        action="store_true",
+        help="Sync sgl-router folder from OSS.",
+    )
     args = parser.parse_args()
+
+    if args.sync_sgl_router:
+        # replace folder_names with folder_names_for_sglang_router
+        folder_names = folder_names_for_sgl_router
 
     check_dependencies()
     checkout_main(args.dry_run)
