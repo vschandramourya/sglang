@@ -36,7 +36,7 @@ import tempfile
 # --- Configuration Begin ---
 # List of folders and files to copy from the OSS repo.
 # Changes outside these paths will be ignored.
-folder_names = [
+FOLDER_NAMES = [
     "3rdparty",
     "assets",
     "benchmark",
@@ -46,12 +46,8 @@ folder_names = [
     "python/sglang/lang",
     "python/sglang/srt",
     "python/sglang/test",
-    "python/sglang/__init__.py",
     "python/sglang/utils.py",
     "python/sglang/README.md",
-    "python/sglang/bench_one_batch.py",
-    "python/sglang/bench_one_batch_server.py",
-    "python/sglang/bench_serving.py",
     "sgl-kernel",
     "test/lang",
     "test/srt",
@@ -273,7 +269,7 @@ def main():
 
     try:
         # Sync directories
-        sync_directories(oss_root, folder_names, args.dry_run)
+        sync_directories(oss_root, FOLDER_NAMES, args.dry_run)
 
         # Check for changes and create PR if necessary
         if not check_for_changes():
