@@ -261,6 +261,8 @@ def main():
     if args.sync_sgl_router:
         # replace folder_names with folder_names_for_sglang_router
         folder_names = folder_names_for_sgl_router
+    else:
+        folder_names = FOLDER_NAMES
 
     check_dependencies()
     checkout_main(args.dry_run)
@@ -269,7 +271,7 @@ def main():
 
     try:
         # Sync directories
-        sync_directories(oss_root, FOLDER_NAMES, args.dry_run)
+        sync_directories(oss_root, folder_names, args.dry_run)
 
         # Check for changes and create PR if necessary
         if not check_for_changes():
