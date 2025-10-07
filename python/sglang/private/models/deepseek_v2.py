@@ -16,7 +16,7 @@ from sglang.srt.layers.utils import get_layer_id
 from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_loader.weight_utils import default_weight_loader
-from sglang.srt.models.deepseek_v2 import AttnForwardMethod, BackendRegistry
+from sglang.srt.models.deepseek_v2 import AttentionBackendRegistry, AttnForwardMethod
 from sglang.srt.models.deepseek_v2 import (
     DeepseekV2AttentionMLA as SGLANG_DeepseekV2AttentionMLA,
 )
@@ -47,7 +47,9 @@ def handle_trtllm_mla_tgl_attention_backend(attn, forward_batch):
         return _dispatch_mla_subtype(attn, forward_batch)
 
 
-BackendRegistry.register("trtllm_mla_tgl", handle_trtllm_mla_tgl_attention_backend)
+AttentionBackendRegistry.register(
+    "trtllm_mla_tgl", handle_trtllm_mla_tgl_attention_backend
+)
 
 
 _is_hip = is_hip()
