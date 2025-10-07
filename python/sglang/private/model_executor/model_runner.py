@@ -20,15 +20,15 @@ class ModelRunner(SGLANG_ModelRunner):
         self.suffix_cache = None
         if server_args.enable_suffix_decoding:
             logger.info(
-                f"Initializing background batch suffix tree cache {server_args.suffix_cache_max_depth}, {server_args.suffix_cache_ratio}"
+                f"Initializing background batch suffix tree cache {server_args.suffix_cache_max_depth}"
             )
             try:
                 from tore_tree import SuffixCache
-
+                
                 self.suffix_cache = SuffixCache(
-                    max_depth=server_args.suffix_cache_max_depth,
-                    ratio=server_args.suffix_cache_ratio,
+                    max_tree_depth=server_args.suffix_cache_max_depth
                 )
+
             except (ModuleNotFoundError, ImportError):
                 raise RuntimeError(
                     "\n=== Missing dependency: tore_tree ===\n"
@@ -57,14 +57,11 @@ class ModelRunner(SGLANG_ModelRunner):
         results = []
         for req_idx, req in enumerate(schedule_batch.reqs):
             req_id = req.rid
-            # Check if prompt is cached, if not cache it first
-            has_cached = self.suffix_cache.has_cached_prompt(req_id)
 
-            if not has_cached:
-                # Cache the prompt with dummy probabilities
+            # Check if request is active before attempting speculation
+            if req_id not in self.suffix_cache.active_requests:
                 prompt_token_ids = req.origin_input_ids
-                prompt_probs = [1.0] * len(prompt_token_ids)
-                self.suffix_cache.cache_prompt(req_id, prompt_token_ids, prompt_probs)
+                self.suffix_cache.start_request(req_id, prompt_token_ids)
 
             # Build pattern from recent tokens - FIX: use the correct last_token for this request
             max_depth = self.server_args.suffix_cache_max_depth
@@ -100,7 +97,6 @@ class ModelRunner(SGLANG_ModelRunner):
                 max_spec_factor=self.server_args.suffix_max_spec_factor,
                 max_spec_offset=self.server_args.suffix_max_spec_offset,
                 min_token_prob=self.server_args.suffix_min_token_prob,
-                use_cached_prompt=False,
             )
             results.append(result)
 
@@ -127,8 +123,10 @@ class ModelRunner(SGLANG_ModelRunner):
 
         # Process each request using basic extend API
         token_idx = 0
+        seen_req_ids = set()
         for req_idx, req in enumerate(schedule_batch.reqs[:num_reqs]):
             req_id = req.rid
+            seen_req_ids.add(req_id)
             accept_len = accept_length_per_req_cpu[req_idx]
             total_tokens = accept_len + 1  # accepted + bonus
 
@@ -138,12 +136,26 @@ class ModelRunner(SGLANG_ModelRunner):
             token_idx = end_idx
 
             # Cache prompt if not already cached
-            if not self.suffix_cache.has_cached_prompt(req_id):
-                prompt_token_ids = req.origin_input_ids
-                prompt_probs = [1.0] * len(prompt_token_ids)
-                self.suffix_cache.cache_prompt(req_id, prompt_token_ids, prompt_probs)
+            # if not self.suffix_cache.has_cached_prompt(req_id):
+            #     prompt_token_ids = req.origin_input_ids
+            #     prompt_probs = [1.0] * len(prompt_token_ids)
+            #     self.suffix_cache.cache_prompt(req_id, prompt_token_ids, prompt_probs)
 
-            # Update suffix cache with tokens
-            if len(req_tokens) > 0:
-                req_probs = [1.0] * len(req_tokens)
-                self.suffix_cache.update_response(req_id, req_tokens, req_probs)
+            # # Update suffix cache with tokens
+            # if len(req_tokens) > 0:
+            #     req_probs = [1.0] * len(req_tokens)
+            #     self.suffix_cache.update_response(req_id, req_tokens, req_probs)
+
+            if req_id not in self.suffix_cache.active_requests:
+                if req_id in self.suffix_cache.cached_requests:
+                    # Reset the suffix cache for this request.
+                    self.suffix_cache.evict_cached_response(req_id)
+                prompt_token_ids = req.origin_input_ids
+                self.suffix_cache.start_request(req_id, prompt_token_ids)
+
+            self.suffix_cache.add_active_response(req_id, req_tokens)
+        
+        # Stop requests that are not seen
+        for req_id in list(self.suffix_cache.active_requests):
+            if req_id not in seen_req_ids:
+                self.suffix_cache.stop_request(req_id)
