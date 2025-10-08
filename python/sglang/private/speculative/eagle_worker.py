@@ -5,6 +5,7 @@ import torch
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import ScheduleBatch, global_server_args_dict
 from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
+from sglang.srt.utils import is_blackwell
 
 
 class EAGLEWorker(SGLANG_EAGLEWorker):
@@ -15,6 +16,11 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             "triton": self._create_triton_decode_backend,
             "aiter": self._create_aiter_decode_backend,
             "fa3": self._create_fa3_decode_backend,
+            "hybrid_linear_attn": (
+                self._create_fa3_decode_backend
+                if not is_blackwell()
+                else self._create_triton_decode_backend
+            ),
             "flashmla": self._create_flashmla_decode_backend,
             "trtllm_mha": self._create_trtllm_mha_decode_backend,
             "trtllm_mla": self._create_trtllm_mla_decode_backend,
@@ -33,6 +39,12 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             "triton": self._create_triton_prefill_backend,
             "aiter": self._create_aiter_prefill_backend,
             "fa3": self._create_fa3_prefill_backend,
+            "hybrid_linear_attn": (
+                self._create_fa3_prefill_backend
+                if not is_blackwell()
+                else self._create_triton_prefill_backend
+            ),
+            "flashmla": self._create_flashmla_prefill_backend,
             "trtllm_mha": self._create_trtllm_mha_prefill_backend,
             "trtllm_mla": self._create_trtllm_mla_prefill_backend,
             "trtllm_mla_tgl": self._create_trtllm_mla_tgl_prefill_backend,
