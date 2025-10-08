@@ -5,6 +5,7 @@ import torch
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import ScheduleBatch, global_server_args_dict
 from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
+from sglang.srt.utils import is_blackwell
 
 
 class EAGLEWorker(SGLANG_EAGLEWorker):
@@ -15,6 +16,11 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             "triton": self._create_triton_decode_backend,
             "aiter": self._create_aiter_decode_backend,
             "fa3": self._create_fa3_decode_backend,
+            "hybrid_linear_attn": (
+                self._create_fa3_decode_backend
+                if not is_blackwell()
+                else self._create_triton_decode_backend
+            ),
             "flashmla": self._create_flashmla_decode_backend,
             "trtllm_mha": self._create_trtllm_mha_decode_backend,
             "trtllm_mla": self._create_trtllm_mla_decode_backend,
@@ -33,6 +39,12 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             "triton": self._create_triton_prefill_backend,
             "aiter": self._create_aiter_prefill_backend,
             "fa3": self._create_fa3_prefill_backend,
+            "hybrid_linear_attn": (
+                self._create_fa3_prefill_backend
+                if not is_blackwell()
+                else self._create_triton_prefill_backend
+            ),
+            "flashmla": self._create_flashmla_prefill_backend,
             "trtllm_mha": self._create_trtllm_mha_prefill_backend,
             "trtllm_mla": self._create_trtllm_mla_prefill_backend,
             "trtllm_mla_tgl": self._create_trtllm_mla_tgl_prefill_backend,
@@ -74,59 +86,3 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
         )
 
         return TRTLLMMLATGLBackend(self.draft_model_runner, skip_prefill=False)
-
-    def forward_batch_speculative_generation(
-        self, batch: ScheduleBatch
-    ) -> Tuple[LogitsProcessorOutput, torch.Tensor, int, int, bool]:
-        """Run speculative decoding forward.
-
-        NOTE: Many states of batch is modified as you go through. It is not guaranteed that
-        the final output batch have the same state as the input.
-
-        Args:
-            batch: The batch to run forward. The state of the batch is modified as it runs.
-        Returns:
-            A tuple of the final logit output of the target model, next tokens accepted,
-            the batch id (used for overlap schedule), and number of accepted tokens.
-        """
-        if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
-            logits_output, next_token_ids, bid, seq_lens_cpu = (
-                self.forward_target_extend(batch)
-            )
-            with self.draft_tp_context(self.draft_model_runner.tp_group):
-                self.forward_draft_extend(
-                    batch, logits_output.hidden_states, next_token_ids, seq_lens_cpu
-                )
-            return (
-                logits_output,
-                next_token_ids,
-                bid,
-                0,
-                False,
-                [],
-            )  # Add empty acceptance lengths
-        else:
-            with self.draft_tp_context(self.draft_model_runner.tp_group):
-                spec_info = self.draft(batch)
-            logits_output, verify_output, model_worker_batch, can_run_cuda_graph = (
-                self.verify(batch, spec_info)
-            )
-
-            with self.draft_tp_context(self.draft_model_runner.tp_group):
-                # NOTE: We should use `check_forward_draft_extend_after_decode`
-                # when DP attention is enabled, but it is slow. Skip it for now.
-                if (
-                    self.server_args.enable_dp_attention
-                    or batch.spec_info.verified_id.shape[0] > 0
-                ):
-                    # decode is not finished
-                    self.forward_draft_extend_after_decode(batch)
-
-            return (
-                logits_output,
-                verify_output.verified_id,
-                model_worker_batch.bid,
-                sum(verify_output.accept_length_per_req_cpu),
-                can_run_cuda_graph,
-                verify_output.accept_length_per_req_cpu,  # Add per-request acceptance lengths to build the suffix tree
-            )
