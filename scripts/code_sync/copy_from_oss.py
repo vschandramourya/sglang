@@ -36,7 +36,7 @@ import tempfile
 # --- Configuration Begin ---
 # List of folders and files to copy from the OSS repo.
 # Changes outside these paths will be ignored.
-folder_names = [
+FOLDER_NAMES = [
     "3rdparty",
     "assets",
     "benchmark",
@@ -46,7 +46,6 @@ folder_names = [
     "python/sglang/lang",
     "python/sglang/srt",
     "python/sglang/test",
-    "python/sglang/__init__.py",
     "python/sglang/utils.py",
     "python/sglang/README.md",
     "sgl-kernel",
@@ -54,6 +53,10 @@ folder_names = [
     "test/srt",
     "test/README.md",
     "README.md",
+]
+
+folder_names_for_sgl_router = [
+    "sgl-router",
 ]
 
 private_repo = "togethercomputer/tgl"
@@ -248,7 +251,18 @@ def main():
         action="store_true",
         help="Dry run the script without executing git, rsync, or gh commands.",
     )
+    parser.add_argument(
+        "--sync-sgl-router",
+        action="store_true",
+        help="Sync sgl-router folder from OSS.",
+    )
     args = parser.parse_args()
+
+    if args.sync_sgl_router:
+        # replace folder_names with folder_names_for_sglang_router
+        folder_names = folder_names_for_sgl_router
+    else:
+        folder_names = FOLDER_NAMES
 
     check_dependencies()
     checkout_main(args.dry_run)

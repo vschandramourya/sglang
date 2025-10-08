@@ -2,13 +2,12 @@ from enum import IntEnum, auto
 
 
 class SpeculativeAlgorithm(IntEnum):
-
     NONE = auto()
     EAGLE = auto()
     EAGLE3 = auto()
     STANDALONE = auto()
+    NGRAM = auto()
     PHOENIX = auto()
-    LOOKAHEAD = auto()
 
     def is_none(self):
         return self == SpeculativeAlgorithm.NONE
@@ -26,20 +25,20 @@ class SpeculativeAlgorithm(IntEnum):
     def is_standalone(self):
         return self == SpeculativeAlgorithm.STANDALONE
 
+    def is_ngram(self):
+        return self == SpeculativeAlgorithm.NGRAM
+
     def is_phoenix(self):
         return self == SpeculativeAlgorithm.PHOENIX
-
-    def is_lookahead(self):
-        return self == SpeculativeAlgorithm.LOOKAHEAD
 
     @staticmethod
     def from_string(name: str):
         name_map = {
             "EAGLE": SpeculativeAlgorithm.EAGLE,
             "EAGLE3": SpeculativeAlgorithm.EAGLE3,
-            "PHOENIX": SpeculativeAlgorithm.PHOENIX,
             "STANDALONE": SpeculativeAlgorithm.STANDALONE,
-            "LOOKAHEAD": SpeculativeAlgorithm.LOOKAHEAD,
+            "NGRAM": SpeculativeAlgorithm.NGRAM,
+            "PHOENIX": SpeculativeAlgorithm.PHOENIX,
             None: SpeculativeAlgorithm.NONE,
         }
         if name is not None:

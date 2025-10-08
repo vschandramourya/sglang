@@ -97,6 +97,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 max_spec_factor=self.server_args.suffix_max_spec_factor,
                 max_spec_offset=self.server_args.suffix_max_spec_offset,
                 min_token_prob=self.server_args.suffix_min_token_prob,
+                use_cached_prompt=False,
             )
             results.append(result)
 
@@ -134,17 +135,6 @@ class ModelRunner(SGLANG_ModelRunner):
             end_idx = min(token_idx + total_tokens, len(token_list))
             req_tokens = token_list[token_idx:end_idx]
             token_idx = end_idx
-
-            # Cache prompt if not already cached
-            # if not self.suffix_cache.has_cached_prompt(req_id):
-            #     prompt_token_ids = req.origin_input_ids
-            #     prompt_probs = [1.0] * len(prompt_token_ids)
-            #     self.suffix_cache.cache_prompt(req_id, prompt_token_ids, prompt_probs)
-
-            # # Update suffix cache with tokens
-            # if len(req_tokens) > 0:
-            #     req_probs = [1.0] * len(req_tokens)
-            #     self.suffix_cache.update_response(req_id, req_tokens, req_probs)
 
             if req_id not in self.suffix_cache.active_requests:
                 if req_id in self.suffix_cache.cached_requests:

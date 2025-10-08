@@ -1,4 +1,3 @@
-import copy
 import logging
 import os
 import time
@@ -8,12 +7,6 @@ from typing import List, Optional, Tuple
 import torch
 from huggingface_hub import snapshot_download
 
-from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
-    PhoenixDraftCudaGraphRunner,
-)
-from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import (
-    PhoenixDraftExtendCudaGraphRunner,
-)
 from sglang.srt.distributed import (
     GroupCoordinator,
     get_tp_group,
@@ -21,7 +14,6 @@ from sglang.srt.distributed import (
 )
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import get_token_ids_logprobs, get_top_logprobs
-from sglang.srt.managers.mm_utils import embed_mm_inputs
 from sglang.srt.managers.schedule_batch import (
     ScheduleBatch,
     get_last_loc,
@@ -30,21 +22,31 @@ from sglang.srt.managers.schedule_batch import (
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
+    ForwardBatchOutput,
     ForwardBatch,
     ForwardMode,
 )
+from sglang.private.model_executor.forward_batch_info import ForwardBatchOutput
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.speculative.build_eagle_tree import build_tree_kernel_efficient
-from sglang.srt.speculative.eagle_utils import (
+from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
+    PhoenixDraftCudaGraphRunner,
+)
+from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import (
+    PhoenixDraftExtendCudaGraphRunner,
+)
+from sglang.srt.speculative.eagle_info import (
     EagleDraftInput,
     EagleVerifyInput,
     EagleVerifyOutput,
+)
+from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
+from sglang.srt.speculative.spec_utils import (
     assign_draft_cache_locs,
     fast_topk,
     generate_token_bitmask,
     select_top_k_tokens,
 )
-from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.utils import (
     empty_context,
     get_available_gpu_memory,
@@ -453,9 +455,7 @@ class PhoenixWorker(TpModelWorker):
     def draft_model_runner(self):
         return self.model_runner
 
-    def forward_batch_speculative_generation(
-        self, batch: ScheduleBatch
-    ) -> Tuple[LogitsProcessorOutput, torch.Tensor, int, int, bool]:
+    def forward_batch_generation(self, batch: ScheduleBatch) -> ForwardBatchOutput:
         """Run speculative decoding forward.
 
         NOTE: Many states of batch is modified as you go through. It is not guaranteed that
@@ -468,21 +468,20 @@ class PhoenixWorker(TpModelWorker):
             the batch id (used for overlap schedule), and number of accepted tokens.
         """
         if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
-            logits_output, next_token_ids, bid, seq_lens_cpu = (
-                self.forward_target_extend(batch)
+            logits_output, next_token_ids, seq_lens_cpu = self.forward_target_extend(
+                batch
             )
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids, seq_lens_cpu
                 )
-            return (
-                logits_output,
-                next_token_ids,
-                bid,
-                0,
-                False,
-                [],
-            )  # Add empty acceptance lengths
+            return ForwardBatchOutput(
+                logits_output=logits_output,
+                next_token_ids=next_token_ids,
+                num_accepted_tokens=0,
+                can_run_cuda_graph=False,
+                accept_length=[],
+            )
         else:
             with self.draft_tp_context(self.draft_model_runner.tp_group):
                 spec_info = self.draft(batch)
@@ -500,15 +499,14 @@ class PhoenixWorker(TpModelWorker):
                     # decode is not finished
                     self.forward_draft_extend_after_decode(batch)
 
-            return (
-                logits_output,
-                verify_output.verified_id,
-                model_worker_batch.bid,
-                sum(verify_output.accept_length_per_req_cpu),
-                can_run_cuda_graph,
-                verify_output.accept_length_per_req_cpu,  # Add per-request acceptance lengths to build the suffix tree
+            return ForwardBatchOutput(
+                logits_output=logits_output,
+                next_token_ids=verify_output.verified_id,
+                num_accepted_tokens=sum(verify_output.accept_length_per_req_cpu),
+                can_run_cuda_graph=can_run_cuda_graph,
+                accept_length=verify_output.accept_length_per_req_cpu
             )
-
+    
     def check_forward_draft_extend_after_decode(self, batch: ScheduleBatch):
         local_need_forward = batch.spec_info.verified_id.shape[0] > 0
         if not self.server_args.enable_dp_attention:
@@ -538,19 +536,21 @@ class PhoenixWorker(TpModelWorker):
         Returns:
             logits_output: The output of logits. It will contain the full hidden states.
             next_token_ids: Next token ids generated.
-            bid: The model batch ID. Used for overlap schedule.
         """
         # Forward with the target model and get hidden states.
         # We need the full hidden states to prefill the KV cache of the draft model.
         model_worker_batch = batch.get_model_worker_batch()
         model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
-        logits_output, next_token_ids, _ = self.target_worker.forward_batch_generation(
+        forward_batch_output = self.target_worker.forward_batch_generation(
             model_worker_batch
+        )
+        logits_output, next_token_ids = (
+            forward_batch_output.logits_output,
+            forward_batch_output.next_token_ids,
         )
         return (
             logits_output,
             next_token_ids,
-            model_worker_batch.bid,
             model_worker_batch.seq_lens_cpu,
         )
 
@@ -582,6 +582,8 @@ class PhoenixWorker(TpModelWorker):
                     batch.seq_lens,
                     self.speculative_num_steps,
                 )
+                prefix_lens_cpu = batch.seq_lens_cpu
+                seq_lens_cpu = batch.seq_lens_cpu + self.speculative_num_steps
                 extend_num_tokens = num_seqs * self.speculative_num_steps
             else:
                 # In this case, the last partial page needs to be duplicated.
@@ -617,14 +619,23 @@ class PhoenixWorker(TpModelWorker):
                     self.topk,
                     self.page_size,
                 )
-
-                # TODO(lmzheng): remove this device sync
-                extend_num_tokens = torch.sum(self.extend_lens).item()
+                prefix_lens_cpu = batch.seq_lens_cpu
+                last_page_lens = prefix_lens_cpu % self.page_size
+                num_new_pages_per_topk = (
+                    last_page_lens + self.speculative_num_steps + self.page_size - 1
+                ) // self.page_size
+                seq_lens_cpu = (
+                    prefix_lens_cpu // self.page_size * self.page_size
+                    + num_new_pages_per_topk * (self.page_size * self.topk)
+                )
+                extend_num_tokens = torch.sum((seq_lens_cpu - prefix_lens_cpu)).item()
 
             out_cache_loc, token_to_kv_pool_state_backup = (
                 batch.alloc_paged_token_slots_extend(
                     prefix_lens,
+                    prefix_lens_cpu,
                     seq_lens,
+                    seq_lens_cpu,
                     last_loc,
                     extend_num_tokens,
                     backup_state=True,
@@ -1017,10 +1028,12 @@ class PhoenixWorker(TpModelWorker):
             ).cpu()
 
         # Forward
-        logits_output, _, can_run_cuda_graph = (
-            self.target_worker.forward_batch_generation(
-                model_worker_batch, skip_sample=True
-            )
+        forward_batch_output = self.target_worker.forward_batch_generation(
+            model_worker_batch, is_verify=True
+        )
+        logits_output, can_run_cuda_graph = (
+            forward_batch_output.logits_output,
+            forward_batch_output.can_run_cuda_graph,
         )
 
         vocab_mask = None

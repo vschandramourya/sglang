@@ -1,97 +1,187 @@
+import faulthandler
 import logging
+import os
+import signal
+import sys
 import threading
 import time
+from collections import deque
+from concurrent import futures
+from dataclasses import dataclass
+from http import HTTPStatus
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import psutil
+import setproctitle
 import torch
 import zmq
+from torch.distributed import barrier
 
 from sglang.global_config import global_config
-from sglang.private.speculative.spec_info import SpeculativeAlgorithm
-
-# Import missing classes and functions
 from sglang.srt.configs.model_config import ModelConfig
-from sglang.srt.constrained.base_grammar_backend import create_grammar_backend
-from sglang.srt.disaggregation.utils import DisaggregationMode
-from sglang.srt.distributed import (
-    get_pp_group,
-    get_tensor_model_parallel_rank,
-    get_world_group,
+from sglang.srt.constrained.base_grammar_backend import (
+    INVALID_GRAMMAR_OBJ,
+    create_grammar_backend,
 )
+from sglang.srt.disaggregation.decode import (
+    DecodePreallocQueue,
+    DecodeTransferQueue,
+    SchedulerDisaggregationDecodeMixin,
+)
+from sglang.srt.disaggregation.decode_kvcache_offload_manager import (
+    DecodeKVCacheOffloadManager,
+)
+from sglang.srt.disaggregation.prefill import (
+    PrefillBootstrapQueue,
+    SchedulerDisaggregationPrefillMixin,
+)
+from sglang.srt.disaggregation.utils import (
+    DisaggregationMode,
+    MetadataBuffers,
+    ReqToMetadataIdxAllocator,
+    TransferBackend,
+    prepare_abort,
+)
+from sglang.srt.distributed import get_pp_group, get_world_group
+from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
-
-# Import request types for dispatcher
+from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+from sglang.srt.layers.moe import initialize_moe_config
 from sglang.srt.managers.io_struct import (
     AbortReq,
     BatchTokenizedEmbeddingReqInput,
     BatchTokenizedGenerateReqInput,
     ClearHiCacheReqInput,
+    ClearHiCacheReqOutput,
     CloseSessionReqInput,
     DestroyWeightsUpdateGroupReqInput,
     ExpertDistributionReq,
+    ExpertDistributionReqOutput,
+    ExpertDistributionReqType,
     FlushCacheReqInput,
+    FlushCacheReqOutput,
     FreezeGCReq,
     GetInternalStateReq,
+    GetInternalStateReqOutput,
     GetLoadReqInput,
+    GetLoadReqOutput,
     GetWeightsByNameReqInput,
+    HealthCheckOutput,
     InitWeightsSendGroupForRemoteInstanceReqInput,
+    InitWeightsSendGroupForRemoteInstanceReqOutput,
     InitWeightsUpdateGroupReqInput,
     LoadLoRAAdapterReqInput,
+    LoadLoRAAdapterReqOutput,
     MultiTokenizerRegisterReq,
+    MultiTokenizerWrapper,
     OpenSessionReqInput,
+    OpenSessionReqOutput,
     ProfileReq,
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
     RpcReqInput,
+    RpcReqOutput,
     SendWeightsToRemoteInstanceReqInput,
+    SendWeightsToRemoteInstanceReqOutput,
     SetInternalStateReq,
+    SetInternalStateReqOutput,
     SlowDownReqInput,
+    SlowDownReqOutput,
     TokenizedEmbeddingReqInput,
     TokenizedGenerateReqInput,
     UnloadLoRAAdapterReqInput,
+    UnloadLoRAAdapterReqOutput,
     UpdateWeightFromDiskReqInput,
     UpdateWeightsFromDistributedReqInput,
     UpdateWeightsFromTensorReqInput,
 )
+from sglang.srt.managers.mm_utils import init_embedding_cache
 from sglang.srt.managers.schedule_batch import (
+    FINISH_ABORT,
+    MultimodalInputs,
     Req,
+    RequestStage,
     ScheduleBatch,
     global_server_args_dict,
 )
-from sglang.srt.managers.schedule_policy import SchedulePolicy
-from sglang.srt.managers.scheduler import (
-    EmbeddingBatchResult,
-    GenerationBatchResult,
-    IdleSleeper,
+from sglang.srt.managers.schedule_policy import (
+    AddReqResult,
+    PrefillAdder,
+    SchedulePolicy,
 )
+from sglang.srt.managers.scheduler import EmbeddingBatchResult, GenerationBatchResult
 from sglang.srt.managers.scheduler import Scheduler as SGLANG_Scheduler
 from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
-
-# Import missing classes
+from sglang.srt.managers.scheduler_metrics_mixin import (
+    RECORD_STEP_TIME,
+    SchedulerMetricsMixin,
+)
+from sglang.srt.managers.scheduler_output_processor_mixin import (
+    SchedulerOutputProcessorMixin,
+)
+from sglang.srt.managers.scheduler_profiler_mixin import SchedulerProfilerMixin
 from sglang.srt.managers.scheduler_recv_skipper import SchedulerRecvSkipper
+from sglang.srt.managers.scheduler_update_weights_mixin import (
+    SchedulerUpdateWeightsMixin,
+)
 from sglang.srt.managers.session_controller import Session
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.managers.tp_worker_overlap_thread import TpModelWorkerClient
-from sglang.srt.managers.utils import DPBalanceMeta
+from sglang.srt.managers.utils import validate_input_length
+from sglang.srt.mem_cache.chunk_cache import ChunkCache, SWAChunkCache
+from sglang.srt.mem_cache.hiradix_cache import HiRadixCache
+from sglang.srt.mem_cache.radix_cache import RadixCache
+from sglang.srt.mem_cache.swa_radix_cache import SWARadixCache
+from sglang.srt.model_executor.forward_batch_info import (
+    ForwardMode,
+    PPProxyTensors,
+)
 from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.server_args import PortArgs, ServerArgs
+from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.torch_memory_saver_adapter import TorchMemorySaverAdapter
+from sglang.srt.tracing.trace import (
+    process_tracing_init,
+    trace_set_proc_propagate_context,
+    trace_set_thread_info,
+    trace_slice_batch,
+    trace_slice_end,
+    trace_slice_start,
+)
+from sglang.srt.two_batch_overlap import TboDPAttentionPreparer
 from sglang.srt.utils import (
+    DynamicGradMode,
+    broadcast_pyobj,
     configure_gc_logger,
+    configure_logger,
+    disable_request_logging,
+    freeze_gc,
     get_available_gpu_memory,
     get_bool_env_var,
+    get_int_env_var,
     get_zmq_socket,
+    kill_itself_when_parent_died,
+    numa_bind_to_node,
+    point_to_point_pyobj,
+    pyspy_dump_schedulers,
+    require_mlp_sync,
+    require_mlp_tp_gather,
+    set_gpu_proc_affinity,
     set_random_seed,
+    suppress_other_loggers,
 )
-from sglang.utils import TypeBasedDispatcher
+from sglang.srt.utils.hf_transformers_utils import (
+    get_processor,
+    get_tokenizer,
+    get_tokenizer_from_processor,
+)
+from sglang.utils import TypeBasedDispatcher, get_exception_traceback
 
 logger = logging.getLogger(__name__)
 
 
 class Scheduler(SGLANG_Scheduler):
-
     def __init__(
         self,
         server_args: ServerArgs,
@@ -101,7 +191,6 @@ class Scheduler(SGLANG_Scheduler):
         moe_ep_rank: int,
         pp_rank: int,
         dp_rank: Optional[int],
-        dp_balance_meta: Optional[DPBalanceMeta] = None,
     ):
         # Parse args
         self.server_args = server_args
@@ -129,7 +218,10 @@ class Scheduler(SGLANG_Scheduler):
         self.enable_metrics_for_all_schedulers = (
             server_args.enable_metrics_for_all_schedulers
         )
-        self.enable_kv_cache_events = server_args.kv_events_config is not None
+        self.enable_kv_cache_events = bool(
+            server_args.kv_events_config and tp_rank == 0
+        )
+        self.enable_trace = server_args.enable_trace
         self.stream_interval = server_args.stream_interval
         self.spec_algorithm = SpeculativeAlgorithm.from_string(
             server_args.speculative_algorithm
@@ -268,10 +360,10 @@ class Scheduler(SGLANG_Scheduler):
                 target_worker=self.tp_worker,
                 dp_rank=dp_rank,
             )
-        elif self.spec_algorithm.is_lookahead():
-            from sglang.srt.speculative.lookahead_worker import LOOKAHEADWorker
+        elif self.spec_algorithm.is_ngram():
+            from sglang.srt.speculative.ngram_worker import NGRAMWorker
 
-            self.draft_worker = LOOKAHEADWorker(
+            self.draft_worker = NGRAMWorker(
                 gpu_id=gpu_id,
                 tp_rank=tp_rank,
                 moe_ep_rank=moe_ep_rank,
@@ -282,6 +374,12 @@ class Scheduler(SGLANG_Scheduler):
             )
         else:
             self.draft_worker = None
+
+        # Dispatch the model worker
+        if self.spec_algorithm.is_none():
+            self.model_worker = self.tp_worker
+        else:
+            self.model_worker = self.draft_worker
 
         # Get token and memory info from the model worker
         (
@@ -298,8 +396,8 @@ class Scheduler(SGLANG_Scheduler):
             _,
             _,
         ) = self.tp_worker.get_worker_info()
-        if global_server_args_dict["max_micro_batch_size"] is None:
-            global_server_args_dict["max_micro_batch_size"] = max(
+        if global_server_args_dict["pp_max_micro_batch_size"] is None:
+            global_server_args_dict["pp_max_micro_batch_size"] = max(
                 self.max_running_requests // server_args.pp_size, 1
             )
 
@@ -436,8 +534,9 @@ class Scheduler(SGLANG_Scheduler):
 
         # Init metrics stats
         self.init_metrics(tp_rank, pp_rank, dp_rank)
-        self.init_kv_events(server_args.kv_events_config)
-        self.init_dp_balance(dp_balance_meta)
+
+        if self.enable_kv_cache_events:
+            self.init_kv_events(server_args.kv_events_config)
 
         # Init disaggregation
         self.disaggregation_mode = DisaggregationMode(
@@ -448,16 +547,8 @@ class Scheduler(SGLANG_Scheduler):
         if get_bool_env_var("SGLANG_GC_LOG"):
             configure_gc_logger()
 
-        # Init prefill kv split size when deterministic inference is enabled with flashinfer attention backend
-        if (
-            self.server_args.enable_deterministic_inference
-            and self.server_args.attention_backend == "flashinfer"
-        ):
-            self.truncation_align_size = get_int_env_var(
-                "SGLANG_FLASHINFER_PREFILL_SPLIT_TILE_SIZE", 4096
-            )
-        else:
-            self.truncation_align_size = None
+        # Init prefill kv split size when deterministic inference is enabled with various attention backends
+        self.init_deterministic_inference_config()
 
         # Init request dispatcher
         self._request_dispatcher = TypeBasedDispatcher(
@@ -518,39 +609,30 @@ class Scheduler(SGLANG_Scheduler):
 
         # Run forward
         if self.is_generation:
+
+            batch_or_worker_batch = batch
+
             if self.spec_algorithm.is_none():
-                model_worker_batch = batch.get_model_worker_batch()
+                # FIXME(lsyin): remove this if and finally unify the abstraction
+                batch_or_worker_batch = batch.get_model_worker_batch()
 
-                if self.pp_group.is_last_rank:
-                    logits_output, next_token_ids, can_run_cuda_graph = (
-                        self.tp_worker.forward_batch_generation(model_worker_batch)
-                    )
-                else:
-                    pp_hidden_states_proxy_tensors, _, can_run_cuda_graph = (
-                        self.tp_worker.forward_batch_generation(model_worker_batch)
-                    )
-                bid = model_worker_batch.bid
-            else:
-                (
-                    logits_output,
-                    next_token_ids,
-                    bid,
-                    num_accepted_tokens,
-                    can_run_cuda_graph,
-                    accept_length_per_req_cpu,
-                ) = self.draft_worker.forward_batch_speculative_generation(batch)
-                # handle suffix tree update
-                if self.server_args.enable_suffix_decoding:
-                    self.tp_worker.model_runner.update_suffix_cache_from_scheduler(
-                        batch, next_token_ids, accept_length_per_req_cpu
-                    )
-                bs = batch.batch_size()
-                self.spec_num_total_accepted_tokens += num_accepted_tokens + bs
-                self.spec_num_total_forward_ct += bs
-                self.num_generated_tokens += num_accepted_tokens
+            forward_batch_output = self.model_worker.forward_batch_generation(
+                batch_or_worker_batch
+            )
 
-            if self.pp_group.is_last_rank:
-                batch.output_ids = next_token_ids
+            if self.server_args.enable_suffix_decoding:
+                self.tp_worker.model_runner.update_suffix_cache_from_scheduler(
+                    batch, forward_batch_output.next_token_ids, forward_batch_output.accept_length_per_req_cpu
+                )
+
+            if not self.spec_algorithm.is_none():
+                # TODO(lsyin): unify this metric-updating logic with non-spec, and move it to decode processing
+                self.udpate_spec_metrics(
+                    batch.batch_size(), forward_batch_output.num_accepted_tokens
+                )
+
+            # update batch's output ids
+            batch.output_ids = forward_batch_output.next_token_ids
 
             # These 2 values are needed for processing the output, but the values can be
             # modified by overlap schedule. So we have to copy them here so that
@@ -563,6 +645,7 @@ class Scheduler(SGLANG_Scheduler):
                 extend_input_len_per_req = [req.extend_input_len for req in batch.reqs]
             else:
                 extend_input_len_per_req = None
+
             if batch.return_logprob:
                 extend_logprob_start_len_per_req = [
                     req.extend_logprob_start_len for req in batch.reqs
@@ -570,23 +653,13 @@ class Scheduler(SGLANG_Scheduler):
             else:
                 extend_logprob_start_len_per_req = None
 
-            ret = GenerationBatchResult(
-                logits_output=logits_output if self.pp_group.is_last_rank else None,
-                pp_hidden_states_proxy_tensors=(
-                    pp_hidden_states_proxy_tensors
-                    if not self.pp_group.is_last_rank
-                    else None
-                ),
-                next_token_ids=next_token_ids if self.pp_group.is_last_rank else None,
+            return GenerationBatchResult.from_forward_batch_output(
+                forward_batch_output=forward_batch_output,
                 extend_input_len_per_req=extend_input_len_per_req,
                 extend_logprob_start_len_per_req=extend_logprob_start_len_per_req,
-                bid=bid,
-                can_run_cuda_graph=can_run_cuda_graph,
             )
         else:  # embedding or reward model
             model_worker_batch = batch.get_model_worker_batch()
             embeddings = self.tp_worker.forward_batch_embedding(model_worker_batch)
-            ret = EmbeddingBatchResult(
-                embeddings=embeddings, bid=model_worker_batch.bid
-            )
+            ret = EmbeddingBatchResult(embeddings=embeddings)
         return ret
