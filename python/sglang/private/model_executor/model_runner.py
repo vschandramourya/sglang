@@ -48,7 +48,7 @@ class ModelRunner(SGLANG_ModelRunner):
             and self.server_args.draft_attention_backend is not None
         ):
             logger.info(
-                f"Usin separate draft attention backend: {self.server_args.draft_attention_backend}"
+                f"Using separate draft attention backend: {self.server_args.draft_attention_backend}"
             )
             self.attn_backend = self._get_attention_backend_from_str(
                 self.server_args.draft_attention_backend
