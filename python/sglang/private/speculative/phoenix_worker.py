@@ -7,6 +7,13 @@ from typing import List, Optional, Tuple
 import torch
 from huggingface_hub import snapshot_download
 
+from sglang.private.managers.scheduler import GenerationBatchResult
+from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
+    PhoenixDraftCudaGraphRunner,
+)
+from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import (
+    PhoenixDraftExtendCudaGraphRunner,
+)
 from sglang.srt.distributed import (
     GroupCoordinator,
     get_tp_group,
@@ -19,7 +26,6 @@ from sglang.srt.managers.schedule_batch import (
     get_last_loc,
     global_server_args_dict,
 )
-from sglang.private.managers.scheduler import GenerationBatchResult
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
@@ -28,12 +34,6 @@ from sglang.srt.model_executor.forward_batch_info import (
 )
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.speculative.build_eagle_tree import build_tree_kernel_efficient
-from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
-    PhoenixDraftCudaGraphRunner,
-)
-from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import (
-    PhoenixDraftExtendCudaGraphRunner,
-)
 from sglang.srt.speculative.eagle_info import (
     EagleDraftInput,
     EagleVerifyInput,
@@ -503,9 +503,9 @@ class PhoenixWorker(TpModelWorker):
                 next_token_ids=verify_output.verified_id,
                 num_accepted_tokens=sum(verify_output.accept_length_per_req_cpu),
                 can_run_cuda_graph=can_run_cuda_graph,
-                accept_length=verify_output.accept_length_per_req_cpu
+                accept_length=verify_output.accept_length_per_req_cpu,
             )
-    
+
     def check_forward_draft_extend_after_decode(self, batch: ScheduleBatch):
         local_need_forward = batch.spec_info.verified_id.shape[0] > 0
         if not self.server_args.enable_dp_attention:
@@ -676,7 +676,10 @@ class PhoenixWorker(TpModelWorker):
         )
 
     def _build_suffix_tree_draft_lists(
-        self, suffix_spec_tokens_batch: List[List[int]], batch_size: int, spec_info: EagleDraftInput
+        self,
+        suffix_spec_tokens_batch: List[List[int]],
+        batch_size: int,
+        spec_info: EagleDraftInput,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
         """Build score_list, token_list, parents_list from suffix tree tokens.
 
@@ -713,7 +716,9 @@ class PhoenixWorker(TpModelWorker):
                 scores = spec_info.topk_p.unsqueeze(1)  # (b, 1, 1)
                 tokens = spec_info.topk_index  # (b, 1)
                 # Parents: [-1, 0] for each request
-                parents = torch.tensor([[-1, 0]], dtype=torch.int64, device=self.device).repeat(batch_size, 1)
+                parents = torch.tensor(
+                    [[-1, 0]], dtype=torch.int64, device=self.device
+                ).repeat(batch_size, 1)
 
                 score_list.append(scores)
                 token_list.append(tokens)
@@ -721,10 +726,16 @@ class PhoenixWorker(TpModelWorker):
             else:
                 # Step i>0: shape (b, 1, 1), (b, 1), (b, 1)
                 # Use suffix tree tokens: step 1 uses suffix_tokens[0], step 2 uses suffix_tokens[1], etc.
-                scores = torch.ones(batch_size, 1, 1, dtype=torch.float32, device=self.device)
-                tokens = torch.zeros(batch_size, 1, dtype=torch.int64, device=self.device)
+                scores = torch.ones(
+                    batch_size, 1, 1, dtype=torch.float32, device=self.device
+                )
+                tokens = torch.zeros(
+                    batch_size, 1, dtype=torch.int64, device=self.device
+                )
                 # Parent index: topk² * (step - 1) + topk = 1 * (step - 1) + 1 = step
-                parents = torch.full((batch_size, 1), step, dtype=torch.int64, device=self.device)
+                parents = torch.full(
+                    (batch_size, 1), step, dtype=torch.int64, device=self.device
+                )
 
                 # Populate with suffix tree tokens (step-1 because step 0 uses topk_index)
                 for req_idx in range(batch_size):
@@ -803,8 +814,7 @@ class PhoenixWorker(TpModelWorker):
                         # Check if ALL requests have valid suffix tree tokens with sufficient length
                         # We need speculative_num_steps - 1 tokens because step 0 uses topk_index
                         all_requests_use_suffix_tree = all(
-                            tokens is not None
-                            for tokens in suffix_spec_tokens_batch
+                            tokens is not None for tokens in suffix_spec_tokens_batch
                         )
             except Exception as e:
                 print(f"Suffix tree generation failed: {e}")
@@ -871,9 +881,6 @@ class PhoenixWorker(TpModelWorker):
             self.speculative_num_steps,
             self.speculative_num_draft_tokens,
         )
-
-        # if suffix_spec_tokens_batch:
-        #     print(f"Suffix tree tokens batch: {suffix_spec_tokens_batch}, all_use_suffix: {all_requests_use_suffix_tree}")
 
         return EagleVerifyInput(
             draft_token=draft_tokens,

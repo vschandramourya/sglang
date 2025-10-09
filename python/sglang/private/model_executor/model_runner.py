@@ -24,7 +24,7 @@ class ModelRunner(SGLANG_ModelRunner):
             )
             try:
                 from tore_tree import SuffixCache
-                
+
                 self.suffix_cache = SuffixCache(
                     max_tree_depth=server_args.suffix_cache_max_depth
                 )
@@ -144,7 +144,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 self.suffix_cache.start_request(req_id, prompt_token_ids)
 
             self.suffix_cache.add_active_response(req_id, req_tokens)
-        
+
         # Stop requests that are not seen
         for req_id in list(self.suffix_cache.active_requests):
             if req_id not in seen_req_ids:
