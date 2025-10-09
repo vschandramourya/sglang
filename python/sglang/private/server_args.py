@@ -2,6 +2,7 @@ import argparse
 import dataclasses
 import logging
 
+from sglang.srt.server_args import ATTENTION_BACKEND_CHOICES
 from sglang.srt.server_args import ServerArgs as SGLANG_ServerArgs
 from sglang.srt.server_args import add_attention_backend_choices
 from sglang.srt.utils import is_sm100_supported
@@ -17,6 +18,9 @@ add_attention_backend_choices(TGL_PRIVATE_ATTENTION_BACKENDS)
 
 @dataclasses.dataclass
 class ServerArgs(SGLANG_ServerArgs):
+
+    # Draft model attention backend
+    draft_attention_backend: str = None
 
     # Suffix tree decoding
     enable_suffix_decoding: bool = False
@@ -111,6 +115,14 @@ class ServerArgs(SGLANG_ServerArgs):
         for action in parser._actions:
             if action.dest == "speculative_algorithm":
                 action.choices.append("PHOENIX")
+
+        parser.add_argument(
+            "--draft-attention-backend",
+            type=str,
+            default=ServerArgs.draft_attention_backend,
+            choices=ATTENTION_BACKEND_CHOICES,
+            help="Attention backend for the draft model.",
+        )
 
         # Suffix tree decoding
         parser.add_argument(

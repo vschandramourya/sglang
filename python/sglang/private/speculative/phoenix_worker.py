@@ -237,7 +237,11 @@ class PhoenixWorker(TpModelWorker):
         }
 
         return self._create_backend(
-            "decode_attention_backend",
+            (
+                "decode_attention_backend"
+                if self.server_args.draft_attention_backend is None
+                else "draft_attention_backend"
+            ),
             backend_map,
             "EAGLE/Phoenix is not supported in decode attention backend {backend_type}",
         )
@@ -253,10 +257,15 @@ class PhoenixWorker(TpModelWorker):
             "trtllm_mla_tgl": self._create_trtllm_mla_tgl_prefill_backend,
         }
         backend_name = (
-            "decode_attention_backend"
-            if self.server_args.speculative_attention_mode == "decode"
-            else "prefill_attention_backend"
+            "draft_attention_backend"
+            if self.server_args.draft_attention_backend is not None
+            else (
+                "decode_attention_backend"
+                if self.server_args.speculative_attention_mode == "decode"
+                else "prefill_attention_backend"
+            )
         )
+
         return self._create_backend(
             backend_name,
             backend_map,
