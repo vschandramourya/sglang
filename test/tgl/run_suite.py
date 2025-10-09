@@ -159,6 +159,7 @@ suites = {
     ],
     "per-commit-4-gpu-b200-cursor": [
         TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 600),
+        TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 400),
     ],
     "per-commit-4-gpu-deepep": [
         TestFile("../srt/ep/test_deepep_small.py", 531),

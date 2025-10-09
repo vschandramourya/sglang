@@ -299,7 +299,7 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id 0 --auto-partition-size 1
+          python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id 0 --auto-partition-size 2
 
   pr-test-finish:
     needs: [
