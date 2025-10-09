@@ -53,6 +53,7 @@ FOLDER_NAMES = [
     "test/srt",
     "test/README.md",
     "README.md",
+    "python/pyproject.toml",
 ]
 
 folder_names_for_sgl_router = [

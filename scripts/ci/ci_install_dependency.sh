@@ -92,3 +92,5 @@ fi
 $PIP_CMD list
 
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
+kill -9 $(nvidia-smi | grep python | awk '{print $5}') || true
+kill -9 $(nvidia-smi | grep sglang | awk '{print $5}') || true
