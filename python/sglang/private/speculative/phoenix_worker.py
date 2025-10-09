@@ -128,10 +128,6 @@ class PhoenixWorker(TpModelWorker):
         # Init draft worker
         with empty_context():
             server_args.quantization = None
-            # if server_args.draft_attention_backend is not None:
-            #     server_args.attention_backend = server_args.draft_attention_backend
-            #     server_args.prefill_attention_backend = server_args.draft_attention_backend
-            #     server_args.decode_attention_backend = server_args.draft_attention_backend
             super().__init__(
                 server_args=server_args,
                 gpu_id=gpu_id,
