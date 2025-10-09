@@ -41,6 +41,16 @@ class ModelRunner(SGLANG_ModelRunner):
                     "======================================\n"
                 )
 
+    def init_attention_backend(self):
+        """Init attention kernel backend."""
+        if self.is_draft_worker and self.server_args.draft_attention_backend is not None:
+            logger.info(f"Usin separate draft attention backend: {self.server_args.draft_attention_backend}")
+            self.attn_backend = self._get_attention_backend_from_str(
+                self.server_args.draft_attention_backend
+            )
+        else:
+            super().init_attention_backend()
+
     def generate_suffix_draft_tokens(self, schedule_batch, last_token_ids) -> list:
         """Generate draft tokens using suffix tree speculation."""
 
