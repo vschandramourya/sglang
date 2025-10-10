@@ -112,7 +112,6 @@ class ModelRunner(SGLANG_ModelRunner):
                 max_spec_factor=self.server_args.suffix_max_spec_factor,
                 max_spec_offset=self.server_args.suffix_max_spec_offset,
                 min_token_prob=self.server_args.suffix_min_token_prob,
-                use_cached_prompt=False,
             )
             results.append(result)
 

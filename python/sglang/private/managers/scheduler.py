@@ -143,7 +143,7 @@ class Scheduler(SGLANG_Scheduler):
                     self.tp_worker.model_runner.update_suffix_cache_from_scheduler(
                         batch,
                         batch_result.next_token_ids,
-                        batch_result.accept_length_per_req_cpu,
+                        batch_result.accept_length,
                     )
 
             if not self.spec_algorithm.is_none():
