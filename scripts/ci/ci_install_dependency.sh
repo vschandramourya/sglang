@@ -3,6 +3,7 @@
 set -euxo pipefail
 
 IS_BLACKWELL=${IS_BLACKWELL:-0}
+IS_EIGHT_GPU_RUNNERS=${IS_EIGHT_GPU_RUNNERS:-0}
 
 if [ "$IS_BLACKWELL" = "1" ]; then
     CU_VERSION="cu129"
@@ -93,4 +94,20 @@ $PIP_CMD list
 
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
 kill -9 $(nvidia-smi | grep python | awk '{print $5}') || true
-kill -9 $(nvidia-smi | grep sglang | awk '{print $5}') || true
+
+kill_non_tgl() {
+    for ele in $(nvidia-smi | grep sglang | awk '{print $5}'); do
+        cwd=$(pwdx ${ele} 2>/dev/null | awk '{print $2}')
+        if [[ "$cwd" != *"tgl"* ]]; then
+            echo "Killing PID ${ele} (cwd=$cwd)"
+            kill -9 ${ele} 2>/dev/null || true
+        fi
+    done
+}
+kill_non_tgl()
+
+if [ "$IS_EIGHT_GPU_RUNNERS" = "1" ]; then
+    kill -9 $(nvidia-smi | grep sglang | awk '{print $5}') || true
+fi
+
+python3 -m flashinfer clear-cache
