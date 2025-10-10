@@ -1,20 +1,22 @@
 import concurrent.futures
 import logging
 import os
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 import torch
+from transformers import PretrainedConfig
 
 from sglang.srt.layers.dp_attention import is_dp_attention_enabled
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
 from sglang.srt.layers.quantization import deep_gemm_wrapper
+from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.quantization.fp8_kernel import (
     per_tensor_quant_mla_fp8,
     per_token_group_quant_mla_deep_gemm_masked_fp8,
 )
 from sglang.srt.layers.utils import get_layer_id
 from sglang.srt.managers.schedule_batch import global_server_args_dict
-from sglang.srt.model_executor.forward_batch_info import ForwardBatch
+from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.deepseek_v2 import AttentionBackendRegistry, AttnForwardMethod
 from sglang.srt.models.deepseek_v2 import (
@@ -23,6 +25,7 @@ from sglang.srt.models.deepseek_v2 import (
 from sglang.srt.models.deepseek_v2 import (
     DeepseekV2ForCausalLM as SGLangDeepseekV2ForCausalLM,
 )
+from sglang.srt.models.deepseek_v2 import DeepseekV2Model as SGLangDeepseekV2Model
 from sglang.srt.models.deepseek_v2 import (
     _dispatch_mla_subtype,
     _is_extend_without_speculative,
@@ -71,6 +74,15 @@ if _is_cuda:
 load_shared = int(os.environ.get("SGL_DS3_LOAD_SHARE_NORM", "0"))
 logger = logging.getLogger(__name__)
 
+try:
+    spec_algo = global_server_args_dict["speculative_algorithm"]
+    disable_normed_states = load_shared and not spec_algo.is_phoenix()
+
+    if disable_normed_states:
+        from sglang.private.layers.cursor_layernorm import CursorRMSNorm
+except:
+    disable_normed_states = False
+
 
 class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
     def _fuse_rope_for_trtllm_mla(self, forward_batch: ForwardBatch) -> bool:
@@ -91,7 +103,49 @@ class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
             )
 
 
+class DeepseekV2Model(SGLangDeepseekV2Model):
+    def __init__(
+        self,
+        config: PretrainedConfig,
+        quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "",
+    ) -> None:
+        super().__init__(config, quant_config, prefix)
+
+        if disable_normed_states:
+            self.norm = CursorRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+
 class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
+    @torch.no_grad()
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        forward_batch: ForwardBatch,
+        input_embeds: torch.Tensor = None,
+        pp_proxy_tensors: Optional[PPProxyTensors] = None,
+    ) -> torch.Tensor:
+        hidden_states = self.model(
+            input_ids, positions, forward_batch, input_embeds, pp_proxy_tensors
+        )
+
+        aux_hidden_states = None
+        if disable_normed_states:
+            hidden_states, residual = hidden_states
+            aux_hidden_states = [residual]
+
+        if self.pp_group.is_last_rank:
+            return self.logits_processor(
+                input_ids,
+                hidden_states,
+                self.lm_head,
+                forward_batch,
+                aux_hidden_states,
+            )
+        else:
+            return hidden_states
+
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]], is_nextn=False):
         if is_nextn:
             if hasattr(self.config, "num_nextn_predict_layers"):
