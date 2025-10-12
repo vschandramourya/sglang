@@ -103,8 +103,8 @@ class TestDeepseekV3FP4MTP(CustomTestCase):
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
-            self.assertGreater(acc_length, 2.04)
-            self.assertGreater(speed, 150)
+            self.assertGreater(acc_length, 2.87)
+            self.assertGreater(speed, 271.94)
 
 
 class TestDeepseekV3FP4MTPFP8Attn(CustomTestCase):
@@ -190,8 +190,8 @@ class TestDeepseekV3FP4MTPFP8Attn(CustomTestCase):
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
-            self.assertGreater(acc_length, 2.04)
-            self.assertGreater(speed, 170)
+            self.assertGreater(acc_length, 2.97)
+            self.assertGreater(speed, 299.17)
 
 
 class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
@@ -279,8 +279,8 @@ class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
-            self.assertGreater(acc_length, 2.00)
-            self.assertGreater(speed, 170)
+            self.assertGreater(acc_length, 2.93)
+            self.assertGreater(speed, 290.09)
 
 
 class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
@@ -370,8 +370,8 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
-            self.assertGreater(acc_length, 2.00)
-            self.assertGreater(speed, 170)
+            self.assertGreater(acc_length, 2.93)
+            self.assertGreater(speed, 243.60)
 
 
 if __name__ == "__main__":
