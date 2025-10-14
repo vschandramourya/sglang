@@ -40,8 +40,11 @@ class Scheduler(SGLANG_Scheduler):
                 )
             else:
                 from sglang.srt.speculative.eagle_worker import EAGLEWorker
+                from sglang.srt.speculative.eagle_worker_v2 import EAGLEWorkerV2
 
-                self.draft_worker = EAGLEWorker(
+                WorkerClass = EAGLEWorkerV2 if self.enable_overlap else EAGLEWorker
+
+                self.draft_worker = WorkerClass(
                     gpu_id=gpu_id,
                     tp_rank=tp_rank,
                     moe_ep_rank=moe_ep_rank,
@@ -94,7 +97,7 @@ class Scheduler(SGLANG_Scheduler):
 
             batch_or_worker_batch = batch
 
-            if self.spec_algorithm.is_none():
+            if self.enable_overlap or self.spec_algorithm.is_none():
                 # FIXME(lsyin): remove this if and finally unify the abstraction
                 batch_or_worker_batch = batch.get_model_worker_batch()
 
@@ -115,30 +118,45 @@ class Scheduler(SGLANG_Scheduler):
                 with self.forward_stream_ctx:
                     self.forward_stream.wait_stream(self.default_stream)
                     self.future_map.resolve_future(model_worker_batch)
-                    if batch.sampling_info.grammars is not None:
-                        model_worker_batch.delay_sample_launch = True
                     batch_result = self.model_worker.forward_batch_generation(
-                        batch_or_worker_batch
+                        model_worker_batch
                     )
                     # FIXME(lsyin): maybe move this to forward_batch_generation
                     batch_result.copy_done = torch.get_device_module(
                         self.device
                     ).Event()
-                    if not model_worker_batch.delay_sample_launch:
-                        self.future_map.store_to_map(
-                            future_indices, batch_result.next_token_ids
-                        )
+                    if batch_result.delay_sample_func is None:
+                        self.future_map.store_to_map(future_indices, batch_result)
                         batch_result.copy_to_cpu()
                     else:
                         batch_result.future_indices = future_indices
 
                 # FIXME(lsyin): move this assignment elsewhere
-                maybe_future_next_token_ids = -future_indices.indices
+                future_indices_or_next_token_ids = -future_indices.indices
+
+                if batch.is_v2_eagle:
+                    # FIXME(lsyin): tmp code for eagle v2
+                    # We only keep future indices for next draft input
+
+                    batch.spec_info = batch_result.next_draft_input
+                    batch.spec_info.future_indices = future_indices
+
+                    # batch.spec_info = EagleDraftInput(
+                    #     future_indices=future_indices,
+                    #     verify_done=batch_result.next_draft_input.verify_done,
+                    #     # FIXME(lsyin): remove the allocate_lens in EagleDraftInput
+                    #     allocate_lens=batch_result.next_draft_input.allocate_lens,
+                    # )
+
+                    # The future value, usually for next batch preparation
+                    # Current implementation strictly synchronizes the seq_lens
+                    batch.seq_lens = batch_result.next_draft_input.new_seq_lens
             else:
                 batch_result = self.model_worker.forward_batch_generation(
                     batch_or_worker_batch
                 )
-                maybe_future_next_token_ids = batch_result.next_token_ids
+                future_indices_or_next_token_ids = batch_result.next_token_ids
+
                 if self.server_args.enable_suffix_decoding:
                     self.tp_worker.model_runner.update_suffix_cache_from_scheduler(
                         batch,
@@ -146,17 +164,11 @@ class Scheduler(SGLANG_Scheduler):
                         batch_result.accept_length,
                     )
 
-            if not self.spec_algorithm.is_none():
-                # TODO(lsyin): unify this metric-updating logic with non-spec, and move it to decode processing
-                self.update_spec_metrics(
-                    batch.batch_size(), batch_result.num_accepted_tokens
-                )
-
-            # NOTE: maybe_future_next_token_ids is used in ScheduleBatch,
+            # NOTE: future_indices_or_next_token_ids is used in ScheduleBatch,
             #       which can probably be replaced by future_indices later [TODO(lsyin)].
             #       we shall still keep the original outputs, e.g. next_token_ids
             #       in the GenerationBatchOutput for processing after copy_done.
-            batch.output_ids = maybe_future_next_token_ids
+            batch.output_ids = future_indices_or_next_token_ids
 
             # These 2 values are needed for processing the output, but the values can be
             # modified by overlap schedule. So we have to copy them here so that

@@ -68,7 +68,7 @@ if [ "${CUSTOM_BUILD_SGL_KERNEL:-}" = "true" ]; then
       $PIP_CMD install sgl-kernel/dist/sgl_kernel-${SGL_KERNEL_VERSION_FROM_KERNEL}-cp310-abi3-manylinux2014_x86_64.whl --force-reinstall $PIP_INSTALL_SUFFIX
     fi
 else
-    $PIP_CMD install sgl-kernel --upgrade --force-reinstall $PIP_INSTALL_SUFFIX
+    $PIP_CMD install sgl-kernel==${SGL_KERNEL_VERSION_FROM_SRT} --upgrade --force-reinstall $PIP_INSTALL_SUFFIX
 fi
 
 # Show current packages

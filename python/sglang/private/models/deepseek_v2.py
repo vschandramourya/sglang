@@ -6,16 +6,9 @@ from typing import Iterable, Optional, Tuple
 import torch
 from transformers import PretrainedConfig
 
-from sglang.srt.layers.dp_attention import is_dp_attention_enabled
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
-from sglang.srt.layers.quantization import deep_gemm_wrapper
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
-from sglang.srt.layers.quantization.fp8_kernel import (
-    per_tensor_quant_mla_fp8,
-    per_token_group_quant_mla_deep_gemm_masked_fp8,
-)
 from sglang.srt.layers.utils import get_layer_id
-from sglang.srt.managers.schedule_batch import global_server_args_dict
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.deepseek_v2 import AttentionBackendRegistry, AttnForwardMethod
@@ -31,14 +24,8 @@ from sglang.srt.models.deepseek_v2 import (
     _is_extend_without_speculative,
     add_forward_absorb_core_attention_backend,
 )
-from sglang.srt.utils import (
-    get_bool_env_var,
-    is_cuda,
-    is_gfx95_supported,
-    is_hip,
-    log_info_on_rank0,
-    use_intel_amx_backend,
-)
+from sglang.srt.server_args import get_global_server_args
+from sglang.srt.utils import log_info_on_rank0
 
 add_forward_absorb_core_attention_backend("trtllm_mla_tgl")
 
@@ -54,34 +41,16 @@ AttentionBackendRegistry.register(
     "trtllm_mla_tgl", handle_trtllm_mla_tgl_attention_backend
 )
 
-
-_is_hip = is_hip()
-_use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
-_is_gfx95_supported = is_gfx95_supported()
-_use_aiter_gfx95 = _use_aiter and _is_gfx95_supported
-_is_cuda = is_cuda()
-
-if _use_aiter_gfx95:
-    from sglang.srt.layers.quantization.rocm_mxfp4_utils import (
-        batched_gemm_afp4wfp4_pre_quant,
-        fused_flatten_mxfp4_quant,
-    )
-    from sglang.srt.layers.rocm_linear_utils import fused_qk_rope_cat
-
-if _is_cuda:
-    from sgl_kernel import bmm_fp8
-
 load_shared = int(os.environ.get("SGL_DS3_LOAD_SHARE_NORM", "0"))
 logger = logging.getLogger(__name__)
 
-try:
-    spec_algo = global_server_args_dict["speculative_algorithm"]
-    disable_normed_states = load_shared and not spec_algo.is_phoenix()
 
-    if disable_normed_states:
-        from sglang.private.layers.cursor_layernorm import CursorRMSNorm
-except:
-    disable_normed_states = False
+disable_normed_states = (
+    load_shared and get_global_server_args().speculative_algorithm != "PHOENIX"
+)
+
+if disable_normed_states:
+    from sglang.private.layers.cursor_layernorm import CursorRMSNorm
 
 
 class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
@@ -89,7 +58,7 @@ class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
         """
         Check if we should skip rope and do fused rope+quantize for TRTLLM MLA decode in fp8_e4m3 path.
         """
-        if global_server_args_dict["decode_attention_backend"] == "trtllm_mla_tgl":
+        if get_global_server_args().decode_attention_backend == "trtllm_mla_tgl":
             return (
                 forward_batch.forward_mode.is_decode_or_idle()
                 or forward_batch.forward_mode.is_target_verify()

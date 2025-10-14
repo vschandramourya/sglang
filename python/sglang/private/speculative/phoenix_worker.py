@@ -21,18 +21,19 @@ from sglang.srt.distributed import (
 )
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import get_token_ids_logprobs, get_top_logprobs
-from sglang.srt.managers.schedule_batch import (
-    ScheduleBatch,
-    get_last_loc,
-    global_server_args_dict,
-)
+from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.tp_worker import TpModelWorker
+from sglang.srt.mem_cache.common import (
+    alloc_paged_token_slots_extend,
+    alloc_token_slots,
+    get_last_loc,
+)
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
     ForwardBatch,
     ForwardMode,
 )
-from sglang.srt.server_args import ServerArgs
+from sglang.srt.server_args import ServerArgs, get_global_server_args
 from sglang.srt.speculative.build_eagle_tree import build_tree_kernel_efficient
 from sglang.srt.speculative.eagle_info import (
     EagleDraftInput,
@@ -50,7 +51,6 @@ from sglang.srt.utils import (
     empty_context,
     get_available_gpu_memory,
     get_bool_env_var,
-    is_blackwell,
     is_cuda,
     next_power_of_2,
 )
@@ -273,7 +273,7 @@ class PhoenixWorker(TpModelWorker):
         )
 
     def _create_flashinfer_decode_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             from sglang.srt.layers.attention.flashinfer_backend import (
                 FlashInferMultiStepDraftBackend,
             )
@@ -337,7 +337,7 @@ class PhoenixWorker(TpModelWorker):
         )
 
     def _create_trtllm_mla_decode_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             raise ValueError(
                 "trtllm_mla backend requires MLA model (use_mla_backend=True)."
             )
@@ -352,7 +352,7 @@ class PhoenixWorker(TpModelWorker):
         )
 
     def _create_trtllm_mla_tgl_decode_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             raise ValueError(
                 "trtllm_mla_tgl  backend requires MLA model (use_mla_backend=True)."
             )
@@ -367,7 +367,7 @@ class PhoenixWorker(TpModelWorker):
         )
 
     def _create_trtllm_mla_tgl_prefill_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             raise ValueError(
                 "trtllm_mla_tgl backend requires MLA model (use_mla_backend=True)."
             )
@@ -379,7 +379,7 @@ class PhoenixWorker(TpModelWorker):
         return TRTLLMMLATGLBackend(self.draft_model_runner, skip_prefill=False)
 
     def _create_flashinfer_prefill_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             from sglang.srt.layers.attention.flashinfer_backend import (
                 FlashInferAttnBackend,
             )
@@ -415,7 +415,7 @@ class PhoenixWorker(TpModelWorker):
         return TRTLLMHAAttnBackend(self.draft_model_runner, skip_prefill=False)
 
     def _create_trtllm_mla_prefill_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             raise ValueError(
                 "trtllm_mla backend requires MLA model (use_mla_backend=True)."
             )
@@ -577,8 +577,10 @@ class PhoenixWorker(TpModelWorker):
         # [       topk 0         ] [       topk 1         ]
         # [iter=0, iter=1, iter=2] [iter=0, iter=1, iter=2]
         if self.page_size == 1:
-            out_cache_loc, token_to_kv_pool_state_backup = batch.alloc_token_slots(
-                num_seqs * self.speculative_num_steps * self.topk, backup_state=True
+            out_cache_loc, token_to_kv_pool_state_backup = alloc_token_slots(
+                batch.tree_cache,
+                num_seqs * self.speculative_num_steps * self.topk,
+                backup_state=True,
             )
         else:
             if self.topk == 1:
@@ -637,7 +639,8 @@ class PhoenixWorker(TpModelWorker):
                 extend_num_tokens = torch.sum((seq_lens_cpu - prefix_lens_cpu)).item()
 
             out_cache_loc, token_to_kv_pool_state_backup = (
-                batch.alloc_paged_token_slots_extend(
+                alloc_paged_token_slots_extend(
+                    batch.tree_cache,
                     prefix_lens,
                     prefix_lens_cpu,
                     seq_lens,

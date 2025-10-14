@@ -3,7 +3,8 @@ from typing import Tuple
 import torch
 
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
-from sglang.srt.managers.schedule_batch import ScheduleBatch, global_server_args_dict
+from sglang.srt.managers.schedule_batch import ScheduleBatch
+from sglang.srt.server_args import get_global_server_args
 from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
 from sglang.srt.utils import is_blackwell
 
@@ -61,7 +62,7 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
         )
 
     def _create_trtllm_mla_tgl_decode_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             raise ValueError(
                 "trtllm_mla_tgl  backend requires MLA model (use_mla_backend=True)."
             )
@@ -76,7 +77,7 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
         )
 
     def _create_trtllm_mla_tgl_prefill_backend(self):
-        if not global_server_args_dict["use_mla_backend"]:
+        if not get_global_server_args().use_mla_backend:
             raise ValueError(
                 "trtllm_mla_tgl backend requires MLA model (use_mla_backend=True)."
             )

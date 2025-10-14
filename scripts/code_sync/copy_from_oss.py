@@ -54,6 +54,9 @@ FOLDER_NAMES = [
     "test/README.md",
     "README.md",
     "python/pyproject.toml",
+    "python/sglang/bench_one_batch.py",
+    "python/sglang/bench_one_batch_server.py",
+    "python/sglang/bench_serving.py",
 ]
 
 folder_names_for_sgl_router = [
