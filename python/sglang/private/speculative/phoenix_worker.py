@@ -34,11 +34,14 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 from sglang.srt.server_args import ServerArgs, get_global_server_args
-from sglang.srt.speculative.build_eagle_tree import build_tree_kernel_efficient
 from sglang.srt.speculative.eagle_info import (
     EagleDraftInput,
     EagleVerifyInput,
     EagleVerifyOutput,
+)
+from sglang.srt.speculative.eagle_utils import (
+    build_tree_kernel_efficient,
+    organize_draft_results,
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.speculative.spec_utils import (
@@ -836,8 +839,12 @@ class PhoenixWorker(TpModelWorker):
         if all_requests_use_suffix_tree:
             # Fast path: use suffix tree tokens directly without running draft model
             # Build score_list, token_list, parents_list with same structure as eagle/phoenix
+            print("use all_requests_use_suffix_tree all_requests_use_suffix_tree")
             score_list, token_list, parents_list = self._build_suffix_tree_draft_lists(
                 suffix_spec_tokens_batch, batch_size, spec_info
+            )
+            parent_list, top_scores_index, draft_tokens = organize_draft_results(
+                score_list, token_list, parents_list, self.speculative_num_draft_tokens
             )
             seq_lens_sum = batch.seq_lens_sum
             seq_lens_cpu = batch.seq_lens.cpu()
@@ -855,8 +862,8 @@ class PhoenixWorker(TpModelWorker):
                 forward_batch
             )
             if can_cuda_graph:
-                score_list, token_list, parents_list = self.cuda_graph_runner.replay(
-                    forward_batch
+                parent_list, top_scores_index, draft_tokens = (
+                    self.cuda_graph_runner.replay(forward_batch)
                 )
             else:
                 forward_batch.can_run_dp_cuda_graph = False
@@ -864,7 +871,9 @@ class PhoenixWorker(TpModelWorker):
                     # Initialize attention backend
                     self.draft_attn_backend.init_forward_metadata(forward_batch)
                 # Run forward steps
-                score_list, token_list, parents_list = self.draft_forward(forward_batch)
+                parent_list, top_scores_index, draft_tokens = self.draft_forward(
+                    forward_batch
+                )
             seq_lens_sum = forward_batch.seq_lens_sum
             seq_lens_cpu = forward_batch.seq_lens_cpu
 
@@ -875,6 +884,9 @@ class PhoenixWorker(TpModelWorker):
                 self.speculative_num_draft_tokens,
             )
 
+        if suffix_spec_tokens_batch is not None:
+            print("suffix_spec_tokens_batch:", suffix_spec_tokens_batch)
+
         (
             tree_mask,
             position,
@@ -884,9 +896,9 @@ class PhoenixWorker(TpModelWorker):
             draft_tokens,
         ) = build_tree_kernel_efficient(
             spec_info.verified_id,
-            score_list,
-            token_list,
-            parents_list,
+            parent_list,
+            top_scores_index,
+            draft_tokens,
             batch.seq_lens,
             batch.seq_lens_sum,
             self.topk,
@@ -965,7 +977,7 @@ class PhoenixWorker(TpModelWorker):
                 step_idx = i - 1  # Step index for suffix tokens (0-indexed)
                 batch_size = tree_info[1].shape[0]
                 # Process each request in the batch
-                for req_idx in range(min(batch_size, len(suffix_spec_tokens_batch))):
+                for req_idx in range(len(suffix_spec_tokens_batch)):
                     if suffix_spec_tokens_batch[req_idx] is not None:
                         req_suffix_tokens = suffix_spec_tokens_batch[req_idx]
                         if isinstance(req_suffix_tokens, list) and step_idx < len(
@@ -1015,7 +1027,11 @@ class PhoenixWorker(TpModelWorker):
             if not self._is_phoenix:
                 hidden_states = logits_output.hidden_states
 
-        return score_list, token_list, parents_list
+        parent_list, top_scores_index, draft_tokens = organize_draft_results(
+            score_list, token_list, parents_list, self.speculative_num_draft_tokens
+        )
+
+        return parent_list, top_scores_index, draft_tokens
 
     def clear_cache_pool(self):
         self.model_runner.req_to_token_pool.clear()

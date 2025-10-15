@@ -5,13 +5,25 @@ import torch
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.server_args import get_global_server_args
-from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
+from sglang.srt.speculative.draft_utils import (
+    DraftBackendFactory as SGLANGDraftBackendFactory,
+)
 from sglang.srt.utils import is_blackwell
 
 
-class EAGLEWorker(SGLANG_EAGLEWorker):
+class DraftBackendFactory(SGLANGDraftBackendFactory):
+    def create_decode_backend(self):
+        if self.speculative_num_steps == 1:
 
-    def _create_decode_backend(self):
+            class DummyAttnBackend:
+                def __init__(self):
+                    pass
+
+                def init_forward_metadata(*args, **kwargs):
+                    pass
+
+            return DummyAttnBackend()
+
         backend_map = {
             "flashinfer": self._create_flashinfer_decode_backend,
             "triton": self._create_triton_decode_backend,
@@ -34,7 +46,7 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             "EAGLE is not supported in decode attention backend {backend_type}",
         )
 
-    def _create_draft_extend_backend(self):
+    def create_draft_extend_backend(self):
         backend_map = {
             "flashinfer": self._create_flashinfer_prefill_backend,
             "triton": self._create_triton_prefill_backend,
@@ -64,7 +76,7 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
     def _create_trtllm_mla_tgl_decode_backend(self):
         if not get_global_server_args().use_mla_backend:
             raise ValueError(
-                "trtllm_mla_tgl  backend requires MLA model (use_mla_backend=True)."
+                "trtllm_mla_tgl backend requires MLA model (use_mla_backend=True)."
             )
 
         from sglang.private.layers.attention.trtllm_mla_tgl_backend import (

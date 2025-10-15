@@ -277,11 +277,9 @@ class PhoenixDraftCudaGraphRunner:
         return graph, out
 
     def _postprocess_output_to_raw_bs(self, out, raw_bs):
-        score_list, token_list, parents_list = out
-        score_list = [x[:raw_bs] for x in score_list]
-        token_list = [x[:raw_bs] for x in token_list]
-        parents_list = [x[:raw_bs] for x in parents_list]
-        return (score_list, token_list, parents_list)
+        # Keep the variables name for readability
+        parent_list, top_scores_index, draft_tokens = (t[:raw_bs] for t in out)
+        return parent_list, top_scores_index, draft_tokens
 
     def _apply_suffix_tree_tokens_to_cuda_graph_output(
         self, out, suffix_spec_tokens_batch, raw_bs
@@ -298,7 +296,7 @@ class PhoenixDraftCudaGraphRunner:
             not isinstance(suffix_spec_tokens_batch, list)
             or len(suffix_spec_tokens_batch) == 0
         ):
-            return out
+            return
 
         # Apply suffix tree tokens to the output for each request
         for step_idx in range(
@@ -318,8 +316,6 @@ class PhoenixDraftCudaGraphRunner:
                         if token_list[step_idx].shape[0] > req_idx:
                             token_list[step_idx][req_idx].fill_(suffix_token)
                             score_list[step_idx][req_idx].fill_(1.0)
-
-        return (score_list, token_list, parents_list)
 
     def replay(self, forward_batch: ForwardBatch):
         assert forward_batch.out_cache_loc is not None
@@ -395,7 +391,7 @@ class PhoenixDraftCudaGraphRunner:
         # Apply suffix tree tokens if present
         suffix_spec_tokens_batch = getattr(forward_batch, "suffix_spec_tokens", None)
         if suffix_spec_tokens_batch:
-            out = self._apply_suffix_tree_tokens_to_cuda_graph_output(
+            self._apply_suffix_tree_tokens_to_cuda_graph_output(
                 out, suffix_spec_tokens_batch, raw_bs
             )
 

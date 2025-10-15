@@ -174,11 +174,28 @@ MLA_ATTENTION_BACKENDS = [
     "nsa",
 ]
 
+CHUNKED_PREFIX_CACHE_SUPPORTED_ATTENTION_BACKENDS = [
+    "flashinfer",
+    "fa3",
+    "fa4",
+    "flashmla",
+    "cutlass_mla",
+    "trtllm_mla",
+]
+
 
 def add_mla_attention_backend(backend_name):
     if backend_name not in MLA_ATTENTION_BACKENDS:
         MLA_ATTENTION_BACKENDS.append(backend_name)
         logger.info(f"Added {backend_name} to MLA_ATTENTION_BACKENDS.")
+
+
+def add_chunked_prefix_cache_attention_backend(backend_name):
+    if backend_name not in CHUNKED_PREFIX_CACHE_SUPPORTED_ATTENTION_BACKENDS:
+        CHUNKED_PREFIX_CACHE_SUPPORTED_ATTENTION_BACKENDS.append(backend_name)
+        logger.info(
+            f"Added {backend_name} to CHUNKED_PREFIX_CACHE_SUPPORTED_ATTENTION_BACKENDS."
+        )
 
 
 _is_hip = is_hip()
@@ -604,7 +621,11 @@ class ModelRunner:
                     f"{self.model_config.hf_config.model_type}"
                 )
 
-        if not self.use_mla_backend:
+        if (
+            not self.use_mla_backend
+            or server_args.attention_backend
+            not in CHUNKED_PREFIX_CACHE_SUPPORTED_ATTENTION_BACKENDS
+        ):
             server_args.disable_chunked_prefix_cache = True
 
         if not server_args.disable_chunked_prefix_cache:

@@ -3,12 +3,16 @@ import logging
 import torch
 
 from sglang.srt.model_executor.model_runner import ModelRunner as SGLANG_ModelRunner
-from sglang.srt.model_executor.model_runner import add_mla_attention_backend
+from sglang.srt.model_executor.model_runner import (
+    add_chunked_prefix_cache_attention_backend,
+    add_mla_attention_backend,
+)
 from sglang.srt.server_args import ServerArgs
 
 logger = logging.getLogger(__name__)
 
 add_mla_attention_backend("trtllm_mla_tgl")
+add_chunked_prefix_cache_attention_backend("trtllm_mla_tgl")
 
 
 class ModelRunner(SGLANG_ModelRunner):
