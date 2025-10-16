@@ -839,7 +839,6 @@ class PhoenixWorker(TpModelWorker):
         if all_requests_use_suffix_tree:
             # Fast path: use suffix tree tokens directly without running draft model
             # Build score_list, token_list, parents_list with same structure as eagle/phoenix
-            print("use all_requests_use_suffix_tree all_requests_use_suffix_tree")
             score_list, token_list, parents_list = self._build_suffix_tree_draft_lists(
                 suffix_spec_tokens_batch, batch_size, spec_info
             )
@@ -883,9 +882,6 @@ class PhoenixWorker(TpModelWorker):
                 self.speculative_num_steps,
                 self.speculative_num_draft_tokens,
             )
-
-        if suffix_spec_tokens_batch is not None:
-            print("suffix_spec_tokens_batch:", suffix_spec_tokens_batch)
 
         (
             tree_mask,

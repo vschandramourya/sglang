@@ -25,7 +25,7 @@ class ServerArgs(SGLANG_ServerArgs):
     # Suffix tree decoding
     enable_suffix_decoding: bool = False
     suffix_cache_max_depth: int = 64
-    suffix_cache_ratio: float = 1.0
+    suffix_prompt_cutoff_length: int = 128
     suffix_max_spec_factor: float = 1.0
     suffix_max_spec_offset: float = 0.0
     suffix_min_token_prob: float = 0.1
@@ -137,10 +137,10 @@ class ServerArgs(SGLANG_ServerArgs):
             help="Maximum depth of the suffix tree cache.",
         )
         parser.add_argument(
-            "--suffix-cache-ratio",
-            type=float,
-            default=ServerArgs.suffix_cache_ratio,
-            help="Ratio for combining frequency and probability scores in suffix tree.",
+            "--suffix-prompt-cutoff-length",
+            type=int,
+            default=ServerArgs.suffix_prompt_cutoff_length,
+            help="Maximum length of prompt to cutoff.",
         )
         parser.add_argument(
             "--suffix-max-spec-factor",

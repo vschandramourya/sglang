@@ -80,7 +80,13 @@ class ModelRunner(SGLANG_ModelRunner):
             # Check if request is active before attempting speculation
             if req_id not in self.suffix_cache.active_requests:
                 prompt_token_ids = req.origin_input_ids
-                self.suffix_cache.start_request(req_id, prompt_token_ids)
+                if self.server_args.suffix_prompt_cutoff_length > 0:
+                    self.suffix_cache.start_request(
+                        req_id,
+                        prompt_token_ids[
+                            -self.server_args.suffix_prompt_cutoff_length :
+                        ],
+                    )
 
             # Build pattern from recent tokens - FIX: use the correct last_token for this request
             max_depth = self.server_args.suffix_cache_max_depth
@@ -159,7 +165,13 @@ class ModelRunner(SGLANG_ModelRunner):
                     # Reset the suffix cache for this request.
                     self.suffix_cache.evict_cached_response(req_id)
                 prompt_token_ids = req.origin_input_ids
-                self.suffix_cache.start_request(req_id, prompt_token_ids)
+                if self.server_args.suffix_prompt_cutoff_length > 0:
+                    self.suffix_cache.start_request(
+                        req_id,
+                        prompt_token_ids[
+                            -self.server_args.suffix_prompt_cutoff_length :
+                        ],
+                    )
 
             self.suffix_cache.add_active_response(req_id, req_tokens)
 

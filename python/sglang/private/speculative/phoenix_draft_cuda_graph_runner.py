@@ -285,37 +285,31 @@ class PhoenixDraftCudaGraphRunner:
         self, out, suffix_spec_tokens_batch, raw_bs
     ):
         """
-        Apply suffix tree tokens to CUDA graph output for multiple requests in batch.
+        Apply suffix tree tokens to CUDA-graph output (post-organize) in place.
 
-        This method modifies the token_list and score_list from the CUDA graph execution
-        to incorporate suffix tree tokens instead of Phoenix-generated tokens for specific steps.
+        Mutates only `draft_tokens`: keeps column 0 (verifier) untouched and writes
+        suffix tokens into columns [1 .. N-1], truncating if suffix is longer.
+        Does NOT modify `top_scores_index`.
         """
-        score_list, token_list, parents_list = out
+        parent_list, top_scores_index, draft_tokens = out
 
         if (
             not isinstance(suffix_spec_tokens_batch, list)
-            or len(suffix_spec_tokens_batch) == 0
+            or not suffix_spec_tokens_batch
         ):
-            return
+            return  # in-place; nothing to do
 
-        # Apply suffix tree tokens to the output for each request
-        for step_idx in range(
-            1, len(token_list)
-        ):  # Start from step 1 (step 0 is initial token)
-            token_step_idx = step_idx - 1  # Index into suffix tokens (0-indexed)
+        B, N = draft_tokens.shape  # N == num_draft_token - 1
 
-            # Process each request in the batch
-            for req_idx in range(min(raw_bs, len(suffix_spec_tokens_batch))):
-                if suffix_spec_tokens_batch[req_idx] is not None:
-                    req_suffix_tokens = suffix_spec_tokens_batch[req_idx]
-                    if isinstance(req_suffix_tokens, list) and token_step_idx < len(
-                        req_suffix_tokens
-                    ):
-                        # Replace tokens for this request with suffix tree token
-                        suffix_token = req_suffix_tokens[token_step_idx]
-                        if token_list[step_idx].shape[0] > req_idx:
-                            token_list[step_idx][req_idx].fill_(suffix_token)
-                            score_list[step_idx][req_idx].fill_(1.0)
+        # iterate over whichever is smaller to avoid IndexError if suffix list < B
+        for b in range(min(B, len(suffix_spec_tokens_batch))):
+            suffix_toks = suffix_spec_tokens_batch[b]
+            if not suffix_toks:
+                continue
+            # map suffix[0] -> col 1, suffix[1] -> col 2, ... ; truncate if longer
+            max_write = min(len(suffix_toks), N - 1)
+            for j in range(max_write):
+                draft_tokens[b, 1 + j] = int(suffix_toks[j])
 
     def replay(self, forward_batch: ForwardBatch):
         assert forward_batch.out_cache_loc is not None

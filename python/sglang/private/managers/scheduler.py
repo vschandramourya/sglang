@@ -45,7 +45,7 @@ class Scheduler(SGLANG_Scheduler):
                     dp_rank=dp_rank,
                 )
             else:
-                from sglang.srt.speculative.eagle_worker import EAGLEWorker
+                from sglang.private.speculative.eagle_worker import EAGLEWorker
                 from sglang.srt.speculative.eagle_worker_v2 import EAGLEWorkerV2
 
                 WorkerClass = EAGLEWorkerV2 if self.enable_overlap else EAGLEWorker
