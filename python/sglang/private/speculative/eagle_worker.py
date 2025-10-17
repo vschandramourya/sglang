@@ -11,7 +11,7 @@ from sglang.srt.speculative.eagle_utils import (
     organize_draft_results,
 )
 from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
-from sglang.srt.speculative.spec_utils import fast_topk, select_top_k_tokens
+from sglang.srt.speculative.spec_utils import detect_nan, fast_topk, select_top_k_tokens
 
 
 class EAGLEWorker(SGLANG_EAGLEWorker):
@@ -384,7 +384,8 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             logits_output, _ = self.draft_model_runner.forward(
                 forward_batch, skip_attn_backend_init=True
             )
-            self._detect_nan_if_needed(logits_output)
+            if self.server_args.enable_nan_detection:
+                detect_nan(logits_output)
             probs = torch.softmax(logits_output.next_token_logits, dim=-1)
             topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
             if self.hot_token_id is not None:
