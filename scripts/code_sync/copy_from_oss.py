@@ -47,7 +47,6 @@ FOLDER_NAMES = [
     "python/sglang/srt",
     "python/sglang/test",
     "python/sglang/utils.py",
-    "python/sglang/README.md",
     "sgl-kernel",
     "test/lang",
     "test/srt",
