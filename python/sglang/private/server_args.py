@@ -31,6 +31,10 @@ class ServerArgs(SGLANG_ServerArgs):
     suffix_min_token_prob: float = 0.1
     suffix_min_score_ratio: float = 1.2
 
+    # Incremental tokenizer Related
+    enable_inc_tokenizer: bool = False
+    verify_inc_tokenization_correctness: bool = False
+
     def _handle_other_validations(self):
         if (
             self.attention_backend == "trtllm_mla_tgl"
@@ -170,4 +174,14 @@ class ServerArgs(SGLANG_ServerArgs):
             "--suffix-enable-score",
             action="store_true",
             help="Enable score-based suffix tree override.",
+        )
+        parser.add_argument(
+            "--enable-inc-tokenizer",
+            action="store_true",
+            help="Enable incremental tokenizer with caching.",
+        )
+        parser.add_argument(
+            "--verify-inc-tokenization-correctness",
+            action="store_true",
+            help="Verify correctness of incremental tokenizer against original tokenizer.",
         )
