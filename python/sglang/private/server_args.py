@@ -1,17 +1,21 @@
 import argparse
 import dataclasses
 import logging
+import os
 
 from sglang.srt.server_args import ATTENTION_BACKEND_CHOICES
 from sglang.srt.server_args import ServerArgs as SGLANG_ServerArgs
 from sglang.srt.server_args import add_attention_backend_choices
-from sglang.srt.utils import is_sm100_supported
+from sglang.srt.utils import get_bool_env_var, is_sm100_supported
 
 logger = logging.getLogger(__name__)
 
 TGL_PRIVATE_ATTENTION_BACKENDS = [
     "trtllm_mla_tgl",
 ]
+
+FLASHINFER_FP4_GEMM_BACKENDS = ["cudnn", "trtllm", "cutlass"]
+FP4_GEMM_BACKEND_CHOICES = FLASHINFER_FP4_GEMM_BACKENDS + ["sglang"]
 
 add_attention_backend_choices(TGL_PRIVATE_ATTENTION_BACKENDS)
 
@@ -21,6 +25,9 @@ class ServerArgs(SGLANG_ServerArgs):
 
     # Draft model attention backend
     draft_attention_backend: str = None
+
+    # FP4 GEMM backend
+    fp4_gemm_backend: str = "cutlass"
 
     # Suffix tree decoding
     enable_suffix_decoding: bool = False
@@ -36,6 +43,29 @@ class ServerArgs(SGLANG_ServerArgs):
     verify_inc_tokenization_correctness: bool = False
 
     def _handle_other_validations(self):
+        # Validate FP4 GEMM backend consistency
+        if (
+            get_bool_env_var("SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM", "false")
+            and self.fp4_gemm_backend != "cutlass"
+        ):
+            raise ValueError(
+                f"Conflicting FP4 GEMM backend configuration: "
+                f"SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM=true but --fp4-gemm-backend={self.fp4_gemm_backend}. "
+                f"Please either unset the environment variable or use --fp4-gemm-backend=cutlass."
+            )
+
+        # Check for reverse conflict: cutlass flag with explicitly false env var
+        if (
+            self.fp4_gemm_backend == "cutlass"
+            and "SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM" in os.environ
+            and not get_bool_env_var("SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM")
+        ):
+            raise ValueError(
+                f"Conflicting FP4 GEMM backend configuration: "
+                f"--fp4-gemm-backend=cutlass but SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM={os.environ.get('SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM')}. "
+                f"Please either unset the environment variable or use a different --fp4-gemm-backend value."
+            )
+
         if (
             self.attention_backend == "trtllm_mla_tgl"
             or self.decode_attention_backend == "trtllm_mla_tgl"
@@ -126,6 +156,14 @@ class ServerArgs(SGLANG_ServerArgs):
             default=ServerArgs.draft_attention_backend,
             choices=ATTENTION_BACKEND_CHOICES,
             help="Attention backend for the draft model.",
+        )
+
+        parser.add_argument(
+            "--fp4-gemm-backend",
+            type=str,
+            default=ServerArgs.fp4_gemm_backend,
+            choices=FP4_GEMM_BACKEND_CHOICES,
+            help="Backend for FP4 GEMM operations. 'cudnn' uses flashinfer's cuDNN backend, 'trtllm' uses flashinfer's TensorRT-LLM backend, 'cutlass' uses flashinfer's CUTLASS backend, 'sglang' uses SGLang's kernel backend (no flashinfer).",
         )
 
         # Suffix tree decoding
