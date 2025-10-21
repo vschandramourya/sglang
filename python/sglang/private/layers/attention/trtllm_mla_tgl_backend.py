@@ -214,7 +214,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
         if (
             not forward_mode.is_decode_or_idle()
             and not forward_mode.is_target_verify()
-            and not forward_mode.is_draft_extend()
+            and not forward_mode.is_draft_extend(include_v2=True)
         ):
             return super().init_forward_metadata_capture_cuda_graph(
                 bs,
@@ -232,7 +232,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
             seq_lens = spec_info.draft_token_num + seq_lens
             max_seqlen_pad = self._calc_padded_blocks(seq_lens.max().item())
             block_kv_indices = self.prefill_cuda_graph_kv_indices[:bs, :max_seqlen_pad]
-        elif forward_mode.is_draft_extend():
+        elif forward_mode.is_draft_extend(include_v2=True):
             max_seqlen_pad = self._calc_padded_blocks(seq_lens.max().item())
             block_kv_indices = self.prefill_cuda_graph_kv_indices[:bs, :max_seqlen_pad]
         else:
@@ -251,7 +251,9 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
             PAGED_SIZE=self.page_size,
         )
 
-        if forward_mode.is_target_verify() or forward_mode.is_draft_extend():
+        if forward_mode.is_target_verify() or forward_mode.is_draft_extend(
+            include_v2=True
+        ):
             metadata = TRTLLMMLADecodeMetadata(
                 self.decode_cuda_graph_workspace,
                 self.prefill_cuda_graph_kv_indices,
@@ -283,7 +285,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
         if (
             not forward_mode.is_decode_or_idle()
             and not forward_mode.is_target_verify()
-            and not forward_mode.is_draft_extend()
+            and not forward_mode.is_draft_extend(include_v2=True)
         ):
             return super().init_forward_metadata_replay_cuda_graph(
                 bs,
@@ -300,7 +302,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
             metadata = self.prefill_cuda_graph_metadata[bs]
             seq_lens = spec_info.draft_token_num + seq_lens
             metadata.seq_lens.copy_(seq_lens)
-        elif forward_mode.is_draft_extend():
+        elif forward_mode.is_draft_extend(include_v2=True):
             metadata = self.prefill_cuda_graph_metadata[bs]
         else:
             metadata = self.decode_cuda_graph_metadata[bs]
@@ -330,7 +332,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
         if (
             forward_batch.forward_mode.is_extend()
             and not forward_batch.forward_mode.is_target_verify()
-            and not forward_batch.forward_mode.is_draft_extend()
+            and not forward_batch.forward_mode.is_draft_extend(include_v2=True)
         ):
             seq_lens = forward_batch.seq_lens - forward_batch.extend_prefix_lens
             cum_seq_lens_q = torch.cat(
@@ -348,7 +350,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
         elif (
             forward_batch.forward_mode.is_decode_or_idle()
             or forward_batch.forward_mode.is_target_verify()
-            or forward_batch.forward_mode.is_draft_extend()
+            or forward_batch.forward_mode.is_draft_extend(include_v2=True)
         ):
             bs = forward_batch.batch_size
 
@@ -356,7 +358,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
                 seq_lens = (
                     forward_batch.spec_info.draft_token_num + forward_batch.seq_lens
                 )
-            elif forward_batch.forward_mode.is_draft_extend():
+            elif forward_batch.forward_mode.is_draft_extend(include_v2=True):
                 seq_lens = forward_batch.seq_lens
             else:
                 seq_lens = forward_batch.seq_lens
@@ -581,7 +583,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
     ) -> torch.Tensor:
         if (
             forward_batch.forward_mode.is_target_verify()
-            or forward_batch.forward_mode.is_draft_extend()
+            or forward_batch.forward_mode.is_draft_extend(include_v2=True)
             or forward_batch.forward_mode.is_decode_or_idle()
         ):
             merge_query = q_rope is not None

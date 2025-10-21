@@ -21,7 +21,7 @@ from sglang.srt.models.deepseek_v2 import (
 from sglang.srt.models.deepseek_v2 import DeepseekV2Model as SGLangDeepseekV2Model
 from sglang.srt.models.deepseek_v2 import (
     _dispatch_mla_subtype,
-    _is_extend_without_speculative,
+    _get_sum_extend_prefix_lens,
     add_forward_absorb_core_attention_backend,
 )
 from sglang.srt.server_args import get_global_server_args
@@ -30,11 +30,33 @@ from sglang.srt.utils import log_info_on_rank0
 add_forward_absorb_core_attention_backend("trtllm_mla_tgl")
 
 
+def _is_extend_without_speculative(forward_batch):
+    return (
+        forward_batch.forward_mode.is_extend(include_draft_extend_v2=True)
+        and not forward_batch.forward_mode.is_target_verify()
+        and not forward_batch.forward_mode.is_draft_extend(include_v2=True)
+    )
+
+
+# the same as original, but need to do this to make _is_extend_without_speculative modification works
+def handle_attention_trtllm_mla(attn, forward_batch):
+    sum_extend_prefix_lens = _get_sum_extend_prefix_lens(forward_batch)
+    if _is_extend_without_speculative(forward_batch) and (
+        not attn.disable_chunked_prefix_cache or sum_extend_prefix_lens == 0
+    ):
+        return AttnForwardMethod.MHA_CHUNKED_KV
+    else:
+        return _dispatch_mla_subtype(attn, forward_batch)
+
+
 def handle_trtllm_mla_tgl_attention_backend(attn, forward_batch):
     if _is_extend_without_speculative(forward_batch):
         return AttnForwardMethod.MHA_CHUNKED_KV
     else:
         return _dispatch_mla_subtype(attn, forward_batch)
+
+
+AttentionBackendRegistry.register("trtllm_mla", handle_attention_trtllm_mla)
 
 
 AttentionBackendRegistry.register(
@@ -62,7 +84,7 @@ class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
             return (
                 forward_batch.forward_mode.is_decode_or_idle()
                 or forward_batch.forward_mode.is_target_verify()
-                or forward_batch.forward_mode.is_draft_extend()
+                or forward_batch.forward_mode.is_draft_extend(include_v2=True)
             ) and forward_batch.attn_backend.data_type == torch.float8_e4m3fn
         else:
             return (
