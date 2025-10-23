@@ -51,7 +51,6 @@ FOLDER_NAMES = [
     "test/lang",
     "test/srt",
     "test/README.md",
-    "README.md",
     "python/pyproject.toml",
     "python/sglang/bench_one_batch.py",
     "python/sglang/bench_one_batch_server.py",
