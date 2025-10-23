@@ -89,7 +89,10 @@ class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
         else:
             return (
                 self.current_attention_backend == "trtllm_mla"
-                and forward_batch.forward_mode.is_decode_or_idle()
+                and (
+                    forward_batch.forward_mode.is_decode_or_idle()
+                    or forward_batch.forward_mode.is_target_verify()
+                )
                 and forward_batch.attn_backend.data_type == torch.float8_e4m3fn
             )
 
