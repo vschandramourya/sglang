@@ -16,8 +16,8 @@ from sglang.srt.layers.attention.flashinfer_mla_backend import (
     FlashInferMLAMultiStepDraftBackend,
 )
 from sglang.srt.layers.attention.utils import (
-    TRITON_PAD_NUM_PAGE_PER_BLOCK,
     create_flashmla_kv_indices_triton,
+    get_num_page_per_block_flashmla,
 )
 from sglang.srt.layers.dp_attention import get_attention_tp_size
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
@@ -29,7 +29,7 @@ if is_flashinfer_available():
 if TYPE_CHECKING:
     from sglang.srt.layers.radix_attention import RadixAttention
     from sglang.srt.model_executor.model_runner import ModelRunner
-    from sglang.srt.speculative.spec_info import SpecInfo
+    from sglang.srt.speculative.spec_info import SpecInput
 
 # Constants
 DEFAULT_WORKSPACE_SIZE_MB = 128  # Memory workspace size in MB
@@ -129,9 +129,10 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
 
         # Apply dual constraints (take LCM to satisfy both):
         # 1. TRT-LLM: block_num % (128 / page_size) == 0
-        # 2. Triton: page table builder uses 64-index bursts, needs multiple of 64
+        # 2. Triton: number of pages per block
         trtllm_constraint = TRTLLM_BLOCK_CONSTRAINT // self.page_size
-        constraint_lcm = math.lcm(trtllm_constraint, TRITON_PAD_NUM_PAGE_PER_BLOCK)
+        triton_constraint = get_num_page_per_block_flashmla(self.page_size)
+        constraint_lcm = math.lcm(trtllm_constraint, triton_constraint)
 
         if blocks % constraint_lcm != 0:
             blocks = triton.cdiv(blocks, constraint_lcm) * constraint_lcm
@@ -170,7 +171,6 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
             block_kv_indices,
             self.req_to_token.stride(0),
             max_blocks,
-            NUM_PAGE_PER_BLOCK=TRITON_PAD_NUM_PAGE_PER_BLOCK,
             PAGED_SIZE=self.page_size,
         )
 
@@ -206,7 +206,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
         seq_lens: torch.Tensor,
         encoder_lens: Optional[torch.Tensor],
         forward_mode: ForwardMode,
-        spec_info: Optional[SpecInfo],
+        spec_info: Optional[SpecInput],
     ):
         """Initialize metadata for CUDA graph capture."""
 
@@ -247,7 +247,6 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
             block_kv_indices,
             self.req_to_token.stride(0),
             max_seqlen_pad,
-            NUM_PAGE_PER_BLOCK=TRITON_PAD_NUM_PAGE_PER_BLOCK,
             PAGED_SIZE=self.page_size,
         )
 
@@ -277,7 +276,7 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
         seq_lens_sum: int,
         encoder_lens: Optional[torch.Tensor],
         forward_mode: ForwardMode,
-        spec_info: Optional[SpecInfo],
+        spec_info: Optional[SpecInput],
         seq_lens_cpu: Optional[torch.Tensor],
     ):
         """Replay CUDA graph with new inputs."""
@@ -317,7 +316,6 @@ class TRTLLMMLATGLBackend(FlashInferMLAAttnBackend):
             metadata.block_kv_indices,
             self.req_to_token.stride(0),
             metadata.block_kv_indices.shape[1],
-            NUM_PAGE_PER_BLOCK=TRITON_PAD_NUM_PAGE_PER_BLOCK,
             PAGED_SIZE=self.page_size,
         )
         self.forward_decode_metadata = metadata
