@@ -29,6 +29,8 @@ class ModelRunner(SGLANG_ModelRunner):
             try:
                 from tore_tree import SuffixCache
 
+                # from tore_tree.suffix_cache_batched import SuffixCacheBatched as SuffixCache
+
                 self.suffix_cache = SuffixCache(
                     max_tree_depth=server_args.suffix_cache_max_depth
                 )
@@ -92,10 +94,7 @@ class ModelRunner(SGLANG_ModelRunner):
             max_depth = self.server_args.suffix_cache_max_depth
 
             # Get the most recent verified token for THIS specific request
-            if req_idx < len(last_token_ids):
-                last_token_for_req = [last_token_ids[req_idx]]
-            else:
-                last_token_for_req = []
+            last_token_for_req = [last_token_ids[req_id]]
 
             # Build the full token sequence: origin + output + latest verified token
             prev_tokens = req.origin_input_ids + req.output_ids + last_token_for_req
@@ -136,9 +135,10 @@ class ModelRunner(SGLANG_ModelRunner):
         if self.suffix_cache is None or not hasattr(schedule_batch, "reqs"):
             return
 
-        num_reqs = min(len(schedule_batch.reqs), len(accept_length_per_req_cpu))
-        if num_reqs == 0:
+        if len(accept_length_per_req_cpu) < 1:
             return
+
+        assert len(schedule_batch.reqs) == len(accept_length_per_req_cpu)
 
         # Convert tokens to list
         if isinstance(next_token_ids, torch.Tensor):
@@ -149,7 +149,7 @@ class ModelRunner(SGLANG_ModelRunner):
         # Process each request using basic extend API
         token_idx = 0
         seen_req_ids = set()
-        for req_idx, req in enumerate(schedule_batch.reqs[:num_reqs]):
+        for req_idx, req in enumerate(schedule_batch.reqs):
             req_id = req.rid
             seen_req_ids.add(req_id)
             accept_len = accept_length_per_req_cpu[req_idx]
@@ -164,6 +164,7 @@ class ModelRunner(SGLANG_ModelRunner):
                 if req_id in self.suffix_cache.cached_requests:
                     # Reset the suffix cache for this request.
                     self.suffix_cache.evict_cached_response(req_id)
+
                 prompt_token_ids = req.origin_input_ids
                 if self.server_args.suffix_prompt_cutoff_length > 0:
                     self.suffix_cache.start_request(

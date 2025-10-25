@@ -141,6 +141,36 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
 
         return score_list, token_list, parents_list
 
+    def _apply_suffix_tree_tokens_to_cuda_graph_output(
+        self, parent_list, top_scores_index, draft_tokens, suffix_spec_tokens_batch
+    ):
+        """
+        Apply suffix tree tokens to CUDA-graph output (post-organize) in place.
+
+        Mutates only `draft_tokens`: keeps column 0 (verifier) untouched and writes
+        suffix tokens into columns [1 .. N-1], truncating if suffix is longer.
+        Does NOT modify `top_scores_index`.
+        """
+
+        if (
+            not isinstance(suffix_spec_tokens_batch, list)
+            or not suffix_spec_tokens_batch
+        ):
+            return  # in-place; nothing to do
+
+        B, N = draft_tokens.shape  # N == num_draft_token - 1
+
+        # iterate over whichever is smaller to avoid IndexError if suffix list < B
+        for b in range(min(B, len(suffix_spec_tokens_batch))):
+            suffix_toks = suffix_spec_tokens_batch[b]
+            if not suffix_toks:
+                continue
+            # map suffix[0] -> col 1, suffix[1] -> col 2, ... ; truncate if longer
+            # print("in cuda graph override batch_idx:", b, suffix_toks)
+            max_write = min(len(suffix_toks), N - 1)
+            for j in range(max_write):
+                draft_tokens[b, 1 + j] = int(suffix_toks[j])
+
     def draft(self, batch: ScheduleBatch):
         # Parse args
         if batch.forward_mode.is_idle():
@@ -164,12 +194,14 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
         ):
             try:
                 # Get the tokens that Phoenix will use as starting points for each request
-                last_token_ids = []
+                last_token_ids = {}
                 batch_size = spec_info.topk_index.shape[0]
+                assert batch_size == len(batch.reqs)
                 # Collect first token for each request in the batch
                 for req_idx in range(batch_size):
                     phoenix_first_token = spec_info.topk_index[req_idx][0].item()
-                    last_token_ids.append(phoenix_first_token)
+                    req_id = batch.reqs[req_idx].rid
+                    last_token_ids[req_id] = phoenix_first_token
                 # Generate suffix tree proposals for all requests in batch
                 suffix_draft_results = (
                     self.target_worker.model_runner.generate_suffix_draft_tokens(
@@ -210,7 +242,10 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
                             tokens is not None for tokens in suffix_spec_tokens_batch
                         )
             except Exception as e:
-                print(f"Suffix tree generation failed: {e}")
+                print(
+                    f"Suffix tree generation failed, this is bug and should not happen: {e}"
+                )
+                print(e)
                 suffix_spec_tokens_batch = None
 
         # OPTIMIZATION: Skip phoenix/eagle draft if all requests use suffix tree
@@ -254,6 +289,14 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             seq_lens_sum = forward_batch.seq_lens_sum
             seq_lens_cpu = forward_batch.seq_lens_cpu
 
+            if suffix_spec_tokens_batch:
+                self._apply_suffix_tree_tokens_to_cuda_graph_output(
+                    parent_list,
+                    top_scores_index,
+                    draft_tokens,
+                    suffix_spec_tokens_batch,
+                )
+
         if batch.forward_mode.is_idle():
             return EagleVerifyInput.create_idle_input(
                 self.topk,
@@ -295,104 +338,3 @@ class EAGLEWorker(SGLANG_EAGLEWorker):
             seq_lens_sum=seq_lens_sum,
             seq_lens_cpu=seq_lens_cpu,
         )
-
-    def draft_forward(self, forward_batch: ForwardBatch):
-        # Parse args
-        spec_info = forward_batch.spec_info
-        assert isinstance(spec_info, EagleDraftInput)
-        out_cache_loc = forward_batch.out_cache_loc
-        topk_p, topk_index, hidden_states = (
-            spec_info.topk_p,
-            spec_info.topk_index,
-            spec_info.hidden_states,
-        )
-        if self.hot_token_id is not None:
-            topk_index = self.hot_token_id[topk_index]
-
-        out_cache_loc = out_cache_loc.reshape(
-            forward_batch.batch_size, self.topk, self.speculative_num_steps
-        )
-        out_cache_loc = out_cache_loc.permute((2, 0, 1)).reshape(
-            self.speculative_num_steps, -1
-        )
-
-        # Return values
-        score_list: List[torch.Tensor] = []
-        token_list: List[torch.Tensor] = []
-        parents_list: List[torch.Tensor] = []
-
-        suffix_spec_tokens_batch = getattr(forward_batch, "suffix_spec_tokens", None)
-
-        # Forward multiple steps
-        scores = None
-        for i in range(self.speculative_num_steps):
-            input_ids, hidden_states, scores, tree_info = select_top_k_tokens(
-                i, topk_p, topk_index, hidden_states, scores, self.topk
-            )
-
-            # If we have suffix tree tokens, replace the selected tokens with suffix tree tokens for each request
-            if (
-                suffix_spec_tokens_batch
-                and isinstance(suffix_spec_tokens_batch, list)
-                and i > 0
-            ):
-                step_idx = i - 1  # Step index for suffix tokens (0-indexed)
-                batch_size = tree_info[1].shape[0]
-                # Process each request in the batch
-                for req_idx in range(min(batch_size, len(suffix_spec_tokens_batch))):
-                    if suffix_spec_tokens_batch[req_idx] is not None:
-                        req_suffix_tokens = suffix_spec_tokens_batch[req_idx]
-                        if isinstance(req_suffix_tokens, list) and step_idx < len(
-                            req_suffix_tokens
-                        ):
-                            # Use suffix tree token for this request at this step
-                            suffix_token = req_suffix_tokens[step_idx]
-                            tree_info[1][req_idx].fill_(
-                                suffix_token
-                            )  # Replace token for this request
-                            tree_info[0][req_idx].fill_(
-                                1.0
-                            )  # Suffix tree only do greedy pick now
-                            input_ids[req_idx] = (
-                                suffix_token  # Update input_id for this request
-                            )
-
-            score_list.append(tree_info[0])
-            token_list.append(tree_info[1])
-            parents_list.append(tree_info[2])
-
-            # We don't need to run the last forward. we get 1 token from draft prefill and (#spec steps - 1) tokens here
-            if i == self.speculative_num_steps - 1:
-                break
-
-            # Set inputs
-            forward_batch.input_ids = input_ids
-            # This is a temporary fix for the case that the user is using standalone
-            # speculative decoding and the draft model architecture is gpt-oss. gpt-oss
-            # rope kernel needs cache_loc to be contiguous.
-            if (
-                self.server_args.speculative_algorithm == "STANDALONE"
-                and self.model_config.hf_config.architectures[0] == "GptOssForCausalLM"
-            ):
-                out_cache_loc = out_cache_loc.contiguous()
-            forward_batch.out_cache_loc = out_cache_loc[i]
-            forward_batch.positions.add_(1)
-            forward_batch.attn_backend = self.draft_attn_backend.attn_backends[i]
-            spec_info.hidden_states = hidden_states
-
-            # Run forward
-            logits_output, _ = self.draft_model_runner.forward(
-                forward_batch, skip_attn_backend_init=True
-            )
-            if self.server_args.enable_nan_detection:
-                detect_nan(logits_output)
-            probs = torch.softmax(logits_output.next_token_logits, dim=-1)
-            topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
-            if self.hot_token_id is not None:
-                topk_index = self.hot_token_id[topk_index]
-            hidden_states = logits_output.hidden_states
-
-        parent_list, top_scores_index, draft_tokens = organize_draft_results(
-            score_list, token_list, parents_list, self.speculative_num_draft_tokens
-        )
-        return parent_list, top_scores_index, draft_tokens
