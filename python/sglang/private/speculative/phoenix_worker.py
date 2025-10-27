@@ -14,6 +14,7 @@ from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
 from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import (
     PhoenixDraftExtendCudaGraphRunner,
 )
+from sglang.private.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.distributed import (
     GroupCoordinator,
     get_tp_group,
@@ -43,7 +44,6 @@ from sglang.srt.speculative.eagle_utils import (
     build_tree_kernel_efficient,
     organize_draft_results,
 )
-from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.speculative.spec_utils import (
     assign_draft_cache_locs,
     fast_topk,

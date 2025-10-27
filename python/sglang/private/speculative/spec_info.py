@@ -1,46 +1,29 @@
-from enum import IntEnum, auto
+from __future__ import annotations
+
+from sglang.srt.speculative.spec_info import (
+    SpeculativeAlgorithm,
+    register_speculative_algorithm,
+)
 
 
-class SpeculativeAlgorithm(IntEnum):
-    NONE = auto()
-    EAGLE = auto()
-    EAGLE3 = auto()
-    STANDALONE = auto()
-    NGRAM = auto()
-    PHOENIX = auto()
+def _create_phoenix_worker(**kwargs):
+    from sglang.private.speculative.phoenix_worker import PhoenixWorker
 
-    def is_none(self):
-        return self == SpeculativeAlgorithm.NONE
+    return PhoenixWorker(**kwargs)
 
-    def is_eagle(self):
-        return (
-            self == SpeculativeAlgorithm.EAGLE
-            or self == SpeculativeAlgorithm.EAGLE3
-            or self == SpeculativeAlgorithm.PHOENIX
-        )
 
-    def is_eagle3(self):
-        return self == SpeculativeAlgorithm.EAGLE3
+phoenix_algorithm = register_speculative_algorithm(
+    "PHOENIX",
+    _create_phoenix_worker,
+    flags=("EAGLE",),
+)
 
-    def is_standalone(self):
-        return self == SpeculativeAlgorithm.STANDALONE
+if not hasattr(SpeculativeAlgorithm, "is_phoenix"):
 
-    def is_ngram(self):
-        return self == SpeculativeAlgorithm.NGRAM
+    def _is_phoenix(self: SpeculativeAlgorithm) -> bool:
+        return self == phoenix_algorithm
 
-    def is_phoenix(self):
-        return self == SpeculativeAlgorithm.PHOENIX
+    SpeculativeAlgorithm.is_phoenix = _is_phoenix  # type: ignore[attr-defined]
 
-    @staticmethod
-    def from_string(name: str):
-        name_map = {
-            "EAGLE": SpeculativeAlgorithm.EAGLE,
-            "EAGLE3": SpeculativeAlgorithm.EAGLE3,
-            "STANDALONE": SpeculativeAlgorithm.STANDALONE,
-            "NGRAM": SpeculativeAlgorithm.NGRAM,
-            "PHOENIX": SpeculativeAlgorithm.PHOENIX,
-            None: SpeculativeAlgorithm.NONE,
-        }
-        if name is not None:
-            name = name.upper()
-        return name_map[name]
+
+__all__ = ["SpeculativeAlgorithm"]
