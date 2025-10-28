@@ -48,6 +48,7 @@ FOLDER_NAMES = [
     "python/sglang/test",
     "python/sglang/utils.py",
     "sgl-kernel",
+    "sgl-router",
     "test/lang",
     "test/srt",
     "test/README.md",
