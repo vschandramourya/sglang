@@ -281,36 +281,6 @@ class PhoenixDraftCudaGraphRunner:
         parent_list, top_scores_index, draft_tokens = (t[:raw_bs] for t in out)
         return parent_list, top_scores_index, draft_tokens
 
-    def _apply_suffix_tree_tokens_to_cuda_graph_output(
-        self, out, suffix_spec_tokens_batch, raw_bs
-    ):
-        """
-        Apply suffix tree tokens to CUDA-graph output (post-organize) in place.
-
-        Mutates only `draft_tokens`: keeps column 0 (verifier) untouched and writes
-        suffix tokens into columns [1 .. N-1], truncating if suffix is longer.
-        Does NOT modify `top_scores_index`.
-        """
-        parent_list, top_scores_index, draft_tokens = out
-
-        if (
-            not isinstance(suffix_spec_tokens_batch, list)
-            or not suffix_spec_tokens_batch
-        ):
-            return  # in-place; nothing to do
-
-        B, N = draft_tokens.shape  # N == num_draft_token - 1
-
-        # iterate over whichever is smaller to avoid IndexError if suffix list < B
-        for b in range(min(B, len(suffix_spec_tokens_batch))):
-            suffix_toks = suffix_spec_tokens_batch[b]
-            if not suffix_toks:
-                continue
-            # map suffix[0] -> col 1, suffix[1] -> col 2, ... ; truncate if longer
-            max_write = min(len(suffix_toks), N - 1)
-            for j in range(max_write):
-                draft_tokens[b, 1 + j] = int(suffix_toks[j])
-
     def replay(self, forward_batch: ForwardBatch):
         assert forward_batch.out_cache_loc is not None
         raw_bs = forward_batch.batch_size
@@ -381,12 +351,5 @@ class PhoenixDraftCudaGraphRunner:
             forward_batch.req_pool_indices = self.req_pool_indices[:raw_bs]
             if forward_batch.seq_lens_cpu is not None:
                 forward_batch.seq_lens_cpu = self.seq_lens_cpu[:raw_bs]
-
-        # Apply suffix tree tokens if present
-        suffix_spec_tokens_batch = getattr(forward_batch, "suffix_spec_tokens", None)
-        if suffix_spec_tokens_batch:
-            self._apply_suffix_tree_tokens_to_cuda_graph_output(
-                out, suffix_spec_tokens_batch, raw_bs
-            )
 
         return out

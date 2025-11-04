@@ -14,7 +14,10 @@ from sglang.private.speculative.phoenix_draft_cuda_graph_runner import (
 from sglang.private.speculative.phoenix_draft_extend_cuda_graph_runner import (
     PhoenixDraftExtendCudaGraphRunner,
 )
-from sglang.private.speculative.spec_info import SpeculativeAlgorithm
+from sglang.private.speculative.suffix_utils import (
+    apply_suffix_tree_tokens,
+    build_suffix_tree_draft_lists,
+)
 from sglang.srt.distributed import (
     GroupCoordinator,
     get_tp_group,
@@ -44,6 +47,7 @@ from sglang.srt.speculative.eagle_utils import (
     build_tree_kernel_efficient,
     organize_draft_results,
 )
+from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.speculative.spec_utils import (
     assign_draft_cache_locs,
     fast_topk,
@@ -690,79 +694,6 @@ class PhoenixWorker(TpModelWorker):
             capture_hidden_mode=CaptureHiddenMode.LAST,
         )
 
-    def _build_suffix_tree_draft_lists(
-        self,
-        suffix_spec_tokens_batch: List[List[int]],
-        batch_size: int,
-        spec_info: EagleDraftInput,
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
-        """Build score_list, token_list, parents_list from suffix tree tokens.
-
-        This creates the same structure as eagle/phoenix draft to ensure compatibility
-        with verification and cuda graph.
-
-        Assumes topk=1 (greedy decoding only).
-
-        IMPORTANT: Step 0 uses spec_info.topk_index (draft model prediction),
-        NOT suffix tokens! Suffix tokens are used from step 1 onwards.
-
-        For topk=1:
-        - Step 0: scores (b,1,1), tokens (b,1)=topk_index, parents (b,2) = [-1, 0]
-        - Step i>0: scores (b,1,1), tokens (b,1)=suffix_tokens[i-1], parents (b,1)
-
-        Args:
-            suffix_spec_tokens_batch: List of token lists, one per request in batch
-            batch_size: Number of requests in batch
-            spec_info: EagleDraftInput containing topk_index for step 0
-
-        Returns:
-            Tuple of (score_list, token_list, parents_list) with length speculative_num_steps
-        """
-        assert self.topk == 1, "Suffix tree optimization currently only supports topk=1"
-
-        score_list: List[torch.Tensor] = []
-        token_list: List[torch.Tensor] = []
-        parents_list: List[torch.Tensor] = []
-
-        for step in range(self.speculative_num_steps):
-            if step == 0:
-                # Step 0: shape (b, 1, 1), (b, 1), (b, 2)
-                # Use topk_p and topk_index from spec_info (from previous round's draft model)
-                scores = spec_info.topk_p.unsqueeze(1)  # (b, 1, 1)
-                tokens = spec_info.topk_index  # (b, 1)
-                # Parents: [-1, 0] for each request
-                parents = torch.tensor(
-                    [[-1, 0]], dtype=torch.int64, device=self.device
-                ).repeat(batch_size, 1)
-
-                score_list.append(scores)
-                token_list.append(tokens)
-                parents_list.append(parents)
-            else:
-                # Step i>0: shape (b, 1, 1), (b, 1), (b, 1)
-                # Use suffix tree tokens: step 1 uses suffix_tokens[0], step 2 uses suffix_tokens[1], etc.
-                scores = torch.ones(
-                    batch_size, 1, 1, dtype=torch.float32, device=self.device
-                )
-                tokens = torch.zeros(
-                    batch_size, 1, dtype=torch.int64, device=self.device
-                )
-                # Parent index: topk² * (step - 1) + topk = 1 * (step - 1) + 1 = step
-                parents = torch.full(
-                    (batch_size, 1), step, dtype=torch.int64, device=self.device
-                )
-
-                # Populate with suffix tree tokens (step-1 because step 0 uses topk_index)
-                for req_idx in range(batch_size):
-                    suffix_tokens = suffix_spec_tokens_batch[req_idx]
-                    tokens[req_idx, 0] = suffix_tokens[step - 1]
-
-                score_list.append(scores)
-                token_list.append(tokens)
-                parents_list.append(parents)
-
-        return score_list, token_list, parents_list
-
     def draft(self, batch: ScheduleBatch):
         # Parse args
         if batch.forward_mode.is_idle():
@@ -786,12 +717,14 @@ class PhoenixWorker(TpModelWorker):
         ):
             try:
                 # Get the tokens that Phoenix will use as starting points for each request
-                last_token_ids = []
+                last_token_ids = {}
                 batch_size = spec_info.topk_index.shape[0]
+                assert batch_size == len(batch.reqs)
                 # Collect first token for each request in the batch
                 for req_idx in range(batch_size):
                     phoenix_first_token = spec_info.topk_index[req_idx][0].item()
-                    last_token_ids.append(phoenix_first_token)
+                    req_id = batch.reqs[req_idx].rid
+                    last_token_ids[req_id] = phoenix_first_token
                 # Generate suffix tree proposals for all requests in batch
                 suffix_draft_results = (
                     self.target_worker.model_runner.generate_suffix_draft_tokens(
@@ -839,8 +772,15 @@ class PhoenixWorker(TpModelWorker):
         if all_requests_use_suffix_tree:
             # Fast path: use suffix tree tokens directly without running draft model
             # Build score_list, token_list, parents_list with same structure as eagle/phoenix
-            score_list, token_list, parents_list = self._build_suffix_tree_draft_lists(
-                suffix_spec_tokens_batch, batch_size, spec_info
+            assert (
+                self.topk == 1
+            ), "Suffix tree optimization currently only supports topk=1"
+            score_list, token_list, parents_list = build_suffix_tree_draft_lists(
+                suffix_spec_tokens_batch,
+                batch_size,
+                spec_info,
+                self.speculative_num_steps,
+                self.device,
             )
             parent_list, top_scores_index, draft_tokens = organize_draft_results(
                 score_list, token_list, parents_list, self.speculative_num_draft_tokens
@@ -875,6 +815,12 @@ class PhoenixWorker(TpModelWorker):
                 )
             seq_lens_sum = forward_batch.seq_lens_sum
             seq_lens_cpu = forward_batch.seq_lens_cpu
+
+            if suffix_spec_tokens_batch:
+                apply_suffix_tree_tokens(
+                    draft_tokens,
+                    suffix_spec_tokens_batch,
+                )
 
         if batch.forward_mode.is_idle():
             return EagleVerifyInput.create_idle_input(
@@ -963,33 +909,6 @@ class PhoenixWorker(TpModelWorker):
             input_ids, hidden_states, scores, tree_info = select_top_k_tokens(
                 i, topk_p, topk_index, hidden_states, scores, self.topk
             )
-
-            # If we have suffix tree tokens, replace the selected tokens with suffix tree tokens for each request
-            if (
-                suffix_spec_tokens_batch
-                and isinstance(suffix_spec_tokens_batch, list)
-                and i > 0
-            ):
-                step_idx = i - 1  # Step index for suffix tokens (0-indexed)
-                batch_size = tree_info[1].shape[0]
-                # Process each request in the batch
-                for req_idx in range(len(suffix_spec_tokens_batch)):
-                    if suffix_spec_tokens_batch[req_idx] is not None:
-                        req_suffix_tokens = suffix_spec_tokens_batch[req_idx]
-                        if isinstance(req_suffix_tokens, list) and step_idx < len(
-                            req_suffix_tokens
-                        ):
-                            # Use suffix tree token for this request at this step
-                            suffix_token = req_suffix_tokens[step_idx]
-                            tree_info[1][req_idx].fill_(
-                                suffix_token
-                            )  # Replace token for this request
-                            tree_info[0][req_idx].fill_(
-                                1.0
-                            )  # Suffix tree only do greedy pick now
-                            input_ids[req_idx] = (
-                                suffix_token  # Update input_id for this request
-                            )
 
             score_list.append(tree_info[0])
             token_list.append(tree_info[1])
