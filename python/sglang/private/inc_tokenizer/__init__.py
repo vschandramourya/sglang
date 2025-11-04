@@ -2,7 +2,7 @@
 Tokenization caching module for TGL.
 
 Adapted from TTRT LLM.
-https://github.com/togethercomputer/together-TensorRT-LLM/commit/e9de23667dfce64da8b949d4a4cdada1e57f4c5c
+https://github.com/togethercomputer/together-TensorRT-LLM/commit/85fa1d15bba6e6dc1d57090ecb51e9eac5193541
 
 Provides caching and optimization for tokenizer operations with boundary-safe
 prefix matching for incremental text tokenization.

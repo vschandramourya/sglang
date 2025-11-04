@@ -5,10 +5,13 @@ This implementation stores text->tokens mappings and does simple prefix matching
 """
 
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .utils import compare_tokenizations
+
+DEBUG = False
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,9 @@ class TokenizationCache:
         self.misses = 0
         self.partial_hits = 0
         self.boundary_whitelist_tokens = boundary_whitelist_tokens
+
+        # Compile regex for finding special tokens
+        self.special_token_pattern = re.compile(r"<[｜|][^｜|>]*[｜|]>")
 
     def _kwargs_key(self, **kwargs) -> str:
         """Create a simple key from kwargs."""
@@ -87,17 +93,69 @@ class TokenizationCache:
         return None
 
     def put(self, text: str, tokens: List[int], **kwargs):
-        """Store a text->tokens mapping."""
+        """Store a text->tokens mapping exactly at special token boundaries."""
         kwargs_key = self._kwargs_key(**kwargs)
+
+        # Default: cache the full text
+        cache_text = text
+        cache_tokens = tokens.copy()
+        # if len(cache_tokens) > 0 and cache_tokens[-1] not in self.boundary_whitelist_tokens:
+        #     if DEBUG:
+        #         print(f'Last token {cache_tokens[-1]} not in boundary whitelist tokens {self.boundary_whitelist_tokens}, not caching')
+        #     return
+
+        # If we have boundary whitelist tokens, find the last safe boundary
+        if self.boundary_whitelist_tokens and len(tokens) > 0:
+            # Check if last token is already a special token
+            if tokens[-1] not in self.boundary_whitelist_tokens:
+                # Walk backwards to find the last special token
+                last_special_idx = None
+                for i in range(len(tokens) - 1, -1, -1):
+                    if tokens[i] in self.boundary_whitelist_tokens:
+                        last_special_idx = i
+                        break
+
+                if last_special_idx is not None:
+                    # We found a special token at position last_special_idx
+                    # Cache tokens[:last_special_idx+1] which ends at the special token
+                    cache_tokens = tokens[: last_special_idx + 1]
+
+                    # average of 4 chars per token, 20 chars per token is enough range
+                    search_range = (len(tokens) - last_special_idx) * 20
+                    search_text = text[-1 * search_range :]
+
+                    all_matches = list(self.special_token_pattern.finditer(search_text))
+
+                    # get last match
+                    last_match = all_matches[-1] if len(all_matches) > 0 else None
+                    if last_match is None:
+                        # no special token found, return
+                        logger.info(f"No special token found, returning")
+                        return
+
+                    cache_text = (
+                        text[: -1 * search_range] + search_text[: last_match.end()]
+                    )
+                    if DEBUG:
+                        print(f"cache_text[-200:]: {cache_text[-200:]}")
+                else:
+                    # no special token found, return
+                    logger.info(f"No special token found, returning")
+                    return
+            else:
+                if DEBUG:
+                    print(
+                        f"Last token {tokens[-1]} from cache_text[-200:] {cache_text[-200:]} in boundary whitelist tokens, caching"
+                    )
 
         # Remove if already exists
         for i, (cached_text, cached_kwargs, _) in enumerate(self.cache):
-            if cached_text == text and cached_kwargs == kwargs_key:
+            if cached_text == cache_text and cached_kwargs == kwargs_key:
                 del self.cache[i]
                 break
 
         # Add to front
-        self.cache.insert(0, (text, kwargs_key, tokens.copy()))
+        self.cache.insert(0, (cache_text, kwargs_key, cache_tokens))
 
         # Trim if needed
         if len(self.cache) > self.max_entries:
@@ -194,9 +252,11 @@ class TokenizerWrapper:
                     len(tokens) == 1
                 ), f"Expected 1 token, got {len(tokens)}. If you'd like to use boundary safe caching, please add the special tokens for this tokenizer."
                 safe_tokens.add(tokens[0])
-            except:
+            except Exception as e:
                 # Some tokenizers might not handle single chars well
-                raise RuntimeError(f"Error tokenizing safe boundary: {boundary}")
+                raise RuntimeError(
+                    f"Error tokenizing safe boundary: {boundary}. Error: {e}"
+                )
 
         # Also add BOS/EOS token IDs if available
         if (
@@ -232,8 +292,8 @@ class TokenizerWrapper:
         if not self.enable_boundary_check or not self.boundary_whitelist_tokens:
             return True  # No boundary checking enabled
 
-        if not prefix_tokens:
-            return True  # Empty prefix is always safe
+        # if not prefix_tokens:
+        #     return True  # Empty prefix is always safe
 
         # Check the last token of the prefix
         if len(prefix_tokens) == 0:
@@ -243,8 +303,16 @@ class TokenizerWrapper:
 
         # If we're not confident about the boundary, reject it
         if last_prefix_token not in self.boundary_whitelist_tokens:
+            if DEBUG:
+                print(
+                    f"Last prefix token {last_prefix_token} not in boundary whitelist tokens {self.boundary_whitelist_tokens}"
+                )
             return False
 
+        if DEBUG:
+            print(
+                f"Last prefix token {last_prefix_token} in boundary whitelist tokens {self.boundary_whitelist_tokens}"
+            )
         return True
 
     def encode(self, text: str, add_special_tokens: bool = True, **kwargs) -> List[int]:
@@ -280,7 +348,7 @@ class TokenizerWrapper:
                 if remainder:
                     # Tokenize remainder without special tokens
                     remainder_tokens = self._direct_encode(
-                        remainder, add_special_tokens=False, **kwargs
+                        remainder, add_special_tokens=add_special_tokens, **kwargs
                     )
 
                     # Combine (prefix already has special tokens if needed)
@@ -335,9 +403,18 @@ class TokenizerWrapper:
     ):
         start_time = time.time()
         # Reference (non-cached) tokenization
-        ref_tokens = self.tokenizer._original_encode(
-            text, add_special_tokens=add_special_tokens, **kwargs
-        )
+        if hasattr(self.tokenizer, "hf"):
+            ref_tokens = self.tokenizer.hf.encode(
+                text, add_special_tokens=add_special_tokens, **kwargs
+            )
+        elif hasattr(self.tokenizer, "_original_encode"):
+            ref_tokens = self.tokenizer._original_encode(
+                text, add_special_tokens=add_special_tokens, **kwargs
+            )
+        else:
+            ref_tokens = self._direct_encode(
+                text, add_special_tokens=add_special_tokens, **kwargs
+            )
         ref_tokenizer_time = time.time() - start_time
 
         # Compare and log
@@ -422,5 +499,7 @@ class TokenizerWrapper:
                 assert (
                     ref_prompt_ids == prompt_ids
                 ), "Chat template tokenization mismatch"
+
+                print(f"Chat template tokenization passed")
 
             return prompt_ids

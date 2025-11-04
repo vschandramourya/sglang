@@ -479,5 +479,106 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
             self.assertGreater(speed, 303.57)
 
 
+class TestDeepseekV3FP4MTPIncTokenizer(CustomTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.model = FULL_DEEPSEEK_V3_FP4_MODEL_PATH
+        cls.base_url = DEFAULT_URL_FOR_TEST
+        other_args = [
+            "--tp",
+            "4",
+            "--attention-backend",
+            "trtllm_mla_tgl",
+            "--moe-runner-backend",
+            "flashinfer_trtllm",
+            "--quantization",
+            "modelopt_fp4",
+            "--speculative-algorithm",
+            "EAGLE",
+            "--speculative-num-steps",
+            "3",
+            "--speculative-eagle-topk",
+            "1",
+            "--speculative-num-draft-tokens",
+            "4",
+            "--enable-inc-tokenizer",
+            "--verify-inc-tokenization-correctness",
+        ]
+        cls.process = popen_launch_server(
+            cls.model,
+            cls.base_url,
+            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            other_args=other_args,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        kill_process_tree(cls.process.pid)
+
+    def test_multi_turn_conversations(self):
+        """Test incremental tokenizer with multi-turn conversations"""
+        import os
+        import subprocess
+        import sys
+
+        # Get model name from server info or use path
+        try:
+            model_info = requests.get(self.base_url + "/get_model_info").json()
+            model_name = model_info.get("model_path", self.model)
+        except:
+            # Fallback: use the last part of model path
+            model_name = self.model.split("/")[-1] if "/" in self.model else self.model
+
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(current_file_dir, "..", ".."))
+        script_path = os.path.join(
+            project_root,
+            "python",
+            "sglang",
+            "private",
+            "inc_tokenizer",
+            "tests",
+            "send_requests.py",
+        )
+
+        if not os.path.exists(script_path):
+            self.fail(f"Script not found: {script_path}")
+
+        port = int(self.base_url.split(":")[-1])
+        server_url = f"http://127.0.0.1:{port}"
+
+        command = [
+            sys.executable,
+            script_path,
+            "--server",
+            server_url,
+            "--model",
+            model_name,
+            "--num-convs",
+            "3",
+            "--max-turns",
+            "5",
+        ]
+
+        print(f"Running command: {' '.join(command)}")
+        # Run from project root to ensure relative imports work correctly
+        result = subprocess.run(
+            command, capture_output=True, text=True, cwd=project_root
+        )
+
+        print("STDOUT:")
+        print(result.stdout)
+        if result.stderr:
+            print("STDERR:")
+            print(result.stderr)
+
+        # Test passes if the script exits with 0 (no errors)
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"send_requests failed with return code {result.returncode}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
