@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.4
+ARG BASE_IMAGE=tgl-base:latest
+
+FROM ${BASE_IMAGE}
+
+# Provide the GitHub PAT via BuildKit secret "gh_pat" or the GITHUB_TOKEN build arg.
+ARG GITHUB_TOKEN
+RUN --mount=type=secret,id=gh_pat \
+    set -eux; \
+    if [ -s /run/secrets/gh_pat ]; then \
+        TOKEN="$(cat /run/secrets/gh_pat)"; \
+        CLONE_URL="https://${TOKEN}@github.com/togethercomputer/tore-tree.git"; \
+    elif [ -n "${GITHUB_TOKEN:-}" ]; then \
+        CLONE_URL="https://${GITHUB_TOKEN}@github.com/togethercomputer/tore-tree.git"; \
+    else \
+        echo "Provide a GitHub PAT via BuildKit secret 'gh_pat' or ARG GITHUB_TOKEN to clone tore-tree" >&2; \
+        exit 1; \
+    fi; \
+    git clone "$CLONE_URL"; \
+    cd tore-tree; \
+    pip install .; \
+    rm -rf .git
+
+# Set workspace directory
+WORKDIR /sgl-workspace/sglang
