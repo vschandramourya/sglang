@@ -41,6 +41,7 @@ class ServerArgs(SGLANG_ServerArgs):
     # Incremental tokenizer Related
     enable_inc_tokenizer: bool = False
     verify_inc_tokenization_correctness: bool = False
+    enable_trtllm_mla_fp8_prefill: bool = False
 
     def _handle_other_validations(self):
         # Validate FP4 GEMM backend consistency
@@ -85,6 +86,14 @@ class ServerArgs(SGLANG_ServerArgs):
                 raise ValueError(
                     "TensorRT-LLM MLA TGL backend only supports kv-cache-dtype of fp8_e4m3 or auto."
                 )
+
+        if self.enable_trtllm_mla_fp8_prefill and not (
+            self.attention_backend == "trtllm_mla"
+            or self.prefill_attention_backend == "trtllm_mla"
+        ):
+            raise ValueError(
+                "TRTLLM MLA FP8 prefill is only supported with trtllm_mla backend."
+            )
 
     def _handle_speculative_decoding(self):
         super()._handle_speculative_decoding()
@@ -222,4 +231,9 @@ class ServerArgs(SGLANG_ServerArgs):
             "--verify-inc-tokenization-correctness",
             action="store_true",
             help="Verify correctness of incremental tokenizer against original tokenizer.",
+        )
+        parser.add_argument(
+            "--enable-trtllm-mla-fp8-prefill",
+            action="store_true",
+            help="Enable FP8 prefill attention for TRTLLM MLA backend.",
         )
