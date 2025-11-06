@@ -58,6 +58,7 @@ from sglang.srt.utils.common import (
     json_list_type,
     nullable_str,
     parse_connector_type,
+    wait_port_available,
     xpu_has_xmx_support,
 )
 from sglang.srt.utils.hf_transformers_utils import check_gguf_file, get_config
@@ -906,24 +907,38 @@ class ServerArgs:
                     logger.info(
                         "Use trtllm_mla as attention backend on sm100 for DeepseekV3ForCausalLM"
                     )
-                if not self.enable_dp_attention:
+                # workaround for https://github.com/flashinfer-ai/flashinfer/issues/2006
+                if not self.enable_dp_attention and self.nnodes == 1:
                     self.enable_flashinfer_allreduce_fusion = True
                     logger.info(
                         "Enable FlashInfer AllReduce Fusion on sm100 for DeepseekV3ForCausalLM"
                     )
-                if self.moe_a2a_backend == "none" and self.moe_runner_backend == "auto":
-                    self.moe_runner_backend = "flashinfer_trtllm"
-                    logger.info(
-                        "Use flashinfer_trtllm as MoE runner backend on sm100 for DeepseekV3ForCausalLM"
-                    )
-                    if self.quantization is None:
-                        # Default DeepSeek V3/R1 native FP8 when not explicitly set,
-                        # Because we need this condition for an assertion in
-                        # flashinfer_trtllm MoE runner backend.
+                quantization_config = getattr(hf_config, "quantization_config", None)
+                quant_method = (
+                    quantization_config.get("quant_method")
+                    if quantization_config is not None
+                    else None
+                )
+                if self.quantization is None:
+                    # Default DeepSeek V3/R1 native FP8 when not explicitly set,
+                    # Because we need this condition for an assertion in
+                    # flashinfer_trtllm MoE runner backend.
+                    if quant_method is None:
                         self.quantization = "fp8"
                         logger.info(
                             "Quantization not specified, default to fp8 for DeepSeek on sm100"
                         )
+                    else:
+                        self.quantization = quant_method
+                if (
+                    self.moe_a2a_backend == "none"
+                    and self.moe_runner_backend == "auto"
+                    and self.quantization in ["fp8", "modelopt_fp8", "modelopt_fp4"]
+                ):
+                    self.moe_runner_backend = "flashinfer_trtllm"
+                    logger.info(
+                        "Use flashinfer_trtllm as MoE runner backend on sm100 for DeepseekV3ForCausalLM"
+                    )
 
         elif model_arch in ["GptOssForCausalLM"]:
             if (
@@ -950,7 +965,8 @@ class ServerArgs:
             )
 
             if is_blackwell_supported():
-                if not self.enable_dp_attention:
+                # workaround for https://github.com/flashinfer-ai/flashinfer/issues/2006
+                if not self.enable_dp_attention and self.nnodes == 1:
                     self.enable_flashinfer_allreduce_fusion = True
                     logger.info(
                         "Enable FlashInfer AllReduce Fusion on sm100 for GptOssForCausalLM"
@@ -988,7 +1004,8 @@ class ServerArgs:
                 "aiter",
                 "triton",
                 "trtllm_mha",
-            }, "fa3, aiter, triton, or trtllm_mha is required for Llama4 model"
+                "intel_xpu",
+            }, "fa3, aiter, triton, trtllm_mha or intel_xpu is required for Llama4 model"
             if is_sm100_supported() and self.attention_backend is None:
                 self.attention_backend = "trtllm_mha"
                 logger.warning(
@@ -3763,6 +3780,10 @@ class ServerArgs:
                 "Please set --chunked-prefill-size -1 when using --multi-item-scoring-delimiter."
             )
 
+        assert (
+            self.schedule_conservativeness >= 0
+        ), "schedule_conservativeness must be non-negative"
+
     def check_lora_server_args(self):
         assert self.max_loras_per_batch > 0, "max_loras_per_batch must be positive"
 
@@ -3956,9 +3977,7 @@ def set_global_server_args_for_scheduler(server_args: ServerArgs):
     _global_server_args = server_args
 
 
-def set_global_server_args_for_tokenizer(server_args: ServerArgs):
-    global _global_server_args
-    _global_server_args = server_args
+set_global_server_args_for_tokenizer = set_global_server_args_for_scheduler
 
 
 def get_global_server_args() -> ServerArgs:
@@ -4082,7 +4101,8 @@ class PortArgs:
             ), "please provide --dist-init-addr as host:port of head node"
 
             dist_init_host, dist_init_port = dist_init_addr
-            port_base = int(dist_init_port) + 1
+            dist_init_port = int(dist_init_port)
+            port_base = dist_init_port + 1
             detokenizer_port = port_base + 1
             rpc_port = port_base + 2
             metrics_ipc_name = port_base + 3
@@ -4092,6 +4112,25 @@ class PortArgs:
             else:
                 assert worker_ports is not None
                 scheduler_input_port = worker_ports[dp_rank]
+
+            try:
+                if dp_rank is None:
+                    wait_port_available(dist_init_port, "dist_init_port")
+                    wait_port_available(port_base, "port_base")
+                    wait_port_available(detokenizer_port, "detokenizer_port")
+                    wait_port_available(nccl_port, "nccl_port")
+                    wait_port_available(rpc_port, "rpc_port")
+                    wait_port_available(metrics_ipc_name, "metrics_ipc_name")
+                # Check scheduler_input_port only for dp.
+                # Skip check when using worker_ports since the port is already bound by our ZMQ socket
+                if dp_rank is None or worker_ports is None:
+                    wait_port_available(scheduler_input_port, "scheduler_input_port")
+            except ValueError as e:
+                logger.exception(
+                    f"Port is already in use. {dist_init_port=} {port_base=} {detokenizer_port=} {nccl_port=} {scheduler_input_port=}"
+                )
+                raise
+
             return PortArgs(
                 tokenizer_ipc_name=f"tcp://{dist_init_host}:{port_base}",
                 scheduler_input_ipc_name=f"tcp://{dist_init_host}:{scheduler_input_port}",
