@@ -160,14 +160,7 @@ def flashinfer_allreduce_residual_rmsnorm(
         logger.debug("Single GPU, no need for allreduce fusion")
         return None, None
 
-    if input_tensor.shape[0] > max_token_num:
-        logger.debug(
-            "Input token(%d) is greater than max_token_num(%d), "
-            "falling back to standard implementation",
-            input_tensor.shape[0],
-            max_token_num,
-        )
-        return None, None
+    assert input_tensor.shape[0] <= max_token_num
 
     if not ensure_workspace_initialized(
         max_token_num=max_token_num,
