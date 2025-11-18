@@ -1,7 +1,3 @@
-from typing import List, Tuple
-
-import torch
-
 from sglang.private.managers.scheduler import GenerationBatchResult
 from sglang.private.speculative.suffix_utils import (
     apply_suffix_tree_tokens,
@@ -15,7 +11,6 @@ from sglang.srt.speculative.eagle_utils import (
     organize_draft_results,
 )
 from sglang.srt.speculative.eagle_worker import EAGLEWorker as SGLANG_EAGLEWorker
-from sglang.srt.speculative.spec_utils import detect_nan, fast_topk, select_top_k_tokens
 
 
 class EAGLEWorker(SGLANG_EAGLEWorker):

@@ -8,7 +8,7 @@ Designed for minimal overhead with detailed performance insights.
 import statistics
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 def milliseconds(seconds: float) -> float:

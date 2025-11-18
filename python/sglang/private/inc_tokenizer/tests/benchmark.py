@@ -11,11 +11,10 @@ python tests/benchmark.py --tokenizer /path/to/model/directory
 from __future__ import annotations
 
 import argparse
-import json
 import random
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import tiktoken

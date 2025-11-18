@@ -5,11 +5,8 @@ For unit testing, simulates multi-turn conversation requests.
 """
 
 import argparse
-import json
-import random
 import sys
-import time
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 try:
     import requests
@@ -18,7 +15,6 @@ except ImportError:
     sys.exit(1)
 
 from sglang.private.inc_tokenizer.tests.benchmark import (
-    generate_conversation_turn,
     generate_synthetic_conversations,
 )
 

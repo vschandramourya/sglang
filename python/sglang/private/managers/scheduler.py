@@ -2,8 +2,6 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional
 
-import torch
-
 from sglang.private.speculative import spec_info as _private_spec_info  # noqa: F401
 from sglang.srt.managers.scheduler import (
     GenerationBatchResult as SGLANG_GenerationBatchResult,

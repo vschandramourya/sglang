@@ -5,7 +5,10 @@ import os
 
 from sglang.srt.server_args import ATTENTION_BACKEND_CHOICES
 from sglang.srt.server_args import ServerArgs as SGLANG_ServerArgs
-from sglang.srt.server_args import add_attention_backend_choices
+from sglang.srt.server_args import (
+    add_attention_backend_choices,
+    auto_choose_speculative_params,
+)
 from sglang.srt.utils import get_bool_env_var, is_sm100_supported
 
 logger = logging.getLogger(__name__)

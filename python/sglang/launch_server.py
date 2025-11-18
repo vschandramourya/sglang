@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 
+import sglang.private.patches  # noqa: F401
 from sglang.srt.server_args import prepare_server_args
 from sglang.srt.utils import kill_process_tree
 

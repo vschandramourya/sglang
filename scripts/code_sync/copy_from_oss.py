@@ -61,7 +61,6 @@ FOLDER_NAMES = [
     "python/sglang/check_env.py",
     "python/sglang/compile_deep_gemm.py",
     "python/sglang/global_config.py",
-    "python/sglang/launch_server.py",
     "python/sglang/profiler.py",
 ]
 

@@ -1,49 +1,35 @@
 import argparse
 import glob
-from dataclasses import dataclass
+from pathlib import Path
 
-from sglang.test.test_utils import run_unittest_files
+from sglang.test.ci.ci_utils import TestFile, run_unittest_files
 
-
-@dataclass
-class TestFile:
-    name: str
-    estimated_time: float = 60
-
-
+# NOTE: please sort the test cases alphabetically by the test file name
 suites = {
     "per-commit": [
-        # TestFile("../srt/hicache/test_hicache.py", 116),
-        # TestFile("../srt/hicache/test_hicache_mla.py", 127),
-        # TestFile("../srt/hicache/test_hicache_storage.py", 127),
         TestFile("../srt/lora/test_lora.py", 200),
-        TestFile("../srt/lora/test_lora_eviction.py", 200),
         TestFile("../srt/lora/test_lora_backend.py", 99),
-        TestFile("../srt/lora/test_multi_lora_backend.py", 60),
         TestFile("../srt/lora/test_lora_cuda_graph.py", 250),
-        # TestFile("../srt/lora/test_lora_update.py", 400),
+        TestFile("../srt/lora/test_lora_eviction.py", 200),
         TestFile("../srt/lora/test_lora_qwen3.py", 97),
         TestFile("../srt/lora/test_lora_radix_cache.py", 100),
-        TestFile("../srt/models/test_embedding_models.py", 73),
-        # TestFile("../srt/models/test_clip_models.py", 52),
-        TestFile("../srt/models/test_encoder_embedding_models.py", 100),
-        TestFile("../srt/models/test_cross_encoder_models.py", 100),
+        TestFile("../srt/lora/test_multi_lora_backend.py", 60),
         TestFile("../srt/models/test_compressed_tensors_models.py", 42),
+        TestFile("../srt/models/test_cross_encoder_models.py", 100),
+        TestFile("../srt/models/test_embedding_models.py", 73),
+        TestFile("../srt/models/test_encoder_embedding_models.py", 100),
         TestFile("../srt/models/test_generation_models.py", 103),
-        # TestFile("../srt/models/test_gme_qwen_models.py", 45),
-        # TestFile("../srt/models/test_grok_models.py", 60),  # Disabled due to illegal memory access
         TestFile("../srt/models/test_qwen_models.py", 82),
         TestFile("../srt/models/test_reward_models.py", 132),
-        TestFile("../srt/models/test_vlm_models.py", 437),
         TestFile("../srt/models/test_transformers_models.py", 320),
+        TestFile("../srt/models/test_vlm_models.py", 437),
+        TestFile("../srt/openai_server/basic/test_openai_embedding.py", 141),
+        TestFile("../srt/openai_server/basic/test_openai_server.py", 149),
         TestFile("../srt/openai_server/basic/test_protocol.py", 10),
         TestFile("../srt/openai_server/basic/test_serving_chat.py", 10),
         TestFile("../srt/openai_server/basic/test_serving_completions.py", 10),
         TestFile("../srt/openai_server/basic/test_serving_embedding.py", 10),
-        TestFile("../srt/openai_server/basic/test_openai_embedding.py", 141),
-        TestFile("../srt/openai_server/basic/test_openai_server.py", 149),
         TestFile("../srt/openai_server/features/test_enable_thinking.py", 70),
-        # TestFile("../srt/openai_server/features/test_json_constrained.py", 98),
         TestFile("../srt/openai_server/features/test_json_mode.py", 90),
         TestFile("../srt/openai_server/features/test_openai_server_ebnf.py", 95),
         TestFile(
@@ -70,93 +56,79 @@ suites = {
         TestFile("../srt/rl/test_update_weights_from_disk.py", 114),
         TestFile("../srt/rl/test_update_weights_from_tensor.py", 48),
         TestFile("../srt/test_abort.py", 51),
-        TestFile("../srt/test_create_kvindices.py", 2),
         TestFile("../srt/test_chunked_prefill.py", 313),
+        TestFile("../srt/test_create_kvindices.py", 2),
         TestFile("../srt/test_eagle_infer_a.py", 370),
         TestFile("../srt/test_eagle_infer_b.py", 700),
-        # TestFile("../srt/test_ebnf_constrained.py", 108),
         TestFile("../srt/test_eval_fp8_accuracy.py", 303),
         TestFile("../srt/test_fa3.py", 376),
-        # TestFile("../srt/test_flashmla.py", 352),
-        TestFile("../srt/test_function_call_parser.py", 10),
         TestFile("../srt/test_fused_moe.py", 30),
         TestFile("../srt/test_gpt_oss_1gpu.py", 600),
         TestFile("../srt/test_harmony_parser.py", 20),
         TestFile("../srt/test_hidden_states.py", 55),
         TestFile("../srt/test_hybrid_attn_backend.py", 100),
-        TestFile("../srt/test_standalone_speculative_decoding.py", 250),
         TestFile("../srt/test_input_embeddings.py", 38),
         TestFile("../srt/test_io_struct.py", 8),
         TestFile("../srt/test_jinja_template_utils.py", 1),
         TestFile("../srt/test_metrics.py", 32),
         TestFile("../srt/test_metrics_utils.py", 1),
         TestFile("../srt/test_mla.py", 167),
-        TestFile("test_mla_deepseek_v3.py", 700),
-        TestFile("../srt/test_mla_int8_deepseek_v3.py", 429),
         TestFile("../srt/test_mla_flashinfer.py", 302),
         TestFile("../srt/test_mla_fp8.py", 93),
+        TestFile("../srt/test_mla_int8_deepseek_v3.py", 429),
         TestFile("../srt/test_multi_tokenizer.py", 230),
         TestFile("../srt/test_no_chunked_prefill.py", 108),
         TestFile("../srt/test_no_overlap_scheduler.py", 234),
         TestFile("../srt/test_original_logprobs.py", 200),
-        TestFile("../srt/test_penalty.py", 41),
         TestFile("../srt/test_page_size.py", 60),
+        TestFile("../srt/test_penalty.py", 41),
         TestFile("../srt/test_pytorch_sampling_backend.py", 66),
         TestFile("../srt/test_radix_attention.py", 105),
-        # TestFile("../srt/test_regex_constrained.py", 64),
         TestFile("../srt/test_reasoning_parser.py", 5),
-        TestFile("../srt/test_retract_decode.py", 54),
         TestFile("../srt/test_request_queue_validation.py", 30),
+        TestFile("../srt/test_retract_decode.py", 54),
         TestFile("../srt/test_server_args.py", 1),
         TestFile("../srt/test_skip_tokenizer_init.py", 117),
-        TestFile("../srt/test_srt_engine.py", 261),
-        TestFile("../srt/test_srt_endpoint.py", 130),
         TestFile("../srt/test_speculative_registry.py", 1),
+        TestFile("../srt/test_srt_endpoint.py", 130),
+        TestFile("../srt/test_srt_engine.py", 261),
+        TestFile("../srt/test_standalone_speculative_decoding.py", 250),
         TestFile("../srt/test_start_profile.py", 60),
         TestFile("../srt/test_torch_compile.py", 76),
         TestFile("../srt/test_torch_compile_moe.py", 172),
         TestFile("../srt/test_torch_native_attention_backend.py", 123),
         TestFile("../srt/test_torchao.py", 70),
-        TestFile("../srt/test_triton_attention_kernels.py", 4),
         TestFile("../srt/test_triton_attention_backend.py", 150),
+        TestFile("../srt/test_triton_attention_kernels.py", 4),
         TestFile("../srt/test_triton_moe_channel_fp8_kernel.py", 25),
         TestFile("../srt/test_triton_sliding_window.py", 250),
         TestFile("../srt/test_utils_update_weights.py", 48),
-        TestFile("test_speculative_registry_private.py", 1),
         TestFile("../srt/test_vision_chunked_prefill.py", 175),
-        TestFile("../srt/test_vlm_input_format.py", 300),
         TestFile("../srt/test_vision_openai_server_a.py", 403),
-        # TestFile("../srt/test_vision_openai_server_b.py", 446),
+        TestFile("../srt/test_vlm_input_format.py", 300),
+        TestFile("test_mla_deepseek_v3.py", 700),
+        TestFile("test_speculative_registry_private.py", 1),
     ],
     "per-commit-2-gpu": [
-        # TestFile("../srt/lora/test_lora_tp.py", 116),
         TestFile("../srt/rl/test_update_weights_from_distributed.py", 103),
         TestFile("../srt/test_data_parallelism.py", 73),
-        # TestFile("../srt/test_dp_attention.py", 277),
         TestFile("../srt/test_load_weights_from_remote_instance.py", 72),
         TestFile("../srt/test_patch_torch.py", 19),
-        # TestFile("../srt/test_release_memory_occupation.py", 127),
-        # TestFile("../srt/hicache/test_hicache_storage_file_backend.py", 400),
-        # TestFile("../srt/hicache/test_hicache_storage_3fs_backend.py", 400),
     ],
     "per-commit-4-gpu": [
+        TestFile("../srt/models/test_qwen3_next_models.py", 200),
         TestFile("../srt/test_gpt_oss_4gpu.py", 600),
         TestFile("../srt/test_local_attn.py", 250),
-        TestFile("../srt/test_pp_single_node.py", 372),
-        TestFile("../srt/models/test_qwen3_next_models.py", 200),
         TestFile("../srt/test_multi_instance_release_memory_occupation.py", 64),
+        TestFile("../srt/test_pp_single_node.py", 372),
     ],
     "per-commit-8-gpu": [
-        # Disabled because it hangs on the CI.
-        # TestFile("../srt/ep/test_moe_ep.py", 181),
         TestFile("../srt/lora/test_lora_llama4.py", 600),
-        TestFile("../srt/test_disaggregation.py", 499),
         TestFile("../srt/test_disaggregation_different_tp.py", 155),
         TestFile("../srt/test_disaggregation_pp.py", 60),
         TestFile("../srt/test_full_deepseek_v3.py", 333),
     ],
     "per-commit-4-gpu-b200": [
-        # TestFile("../srt/test_gpt_oss_4gpu.py", 600),
         TestFile("test_deepseek_v3_fp4_4gpu.py", 600),
     ],
     "per-commit-4-gpu-b200-cursor": [
@@ -172,15 +144,9 @@ suites = {
     "per-commit-8-gpu-h20": [
         TestFile("../srt/quant/test_w4a8_deepseek_v3.py", 371),
     ],
-    "nightly": [
-        TestFile("../srt/test_nightly_gsm8k_eval.py"),
-    ],
-    "vllm_dependency_test": [
-        TestFile("../srt/quant/test_awq.py", 163),
-        TestFile("../srt/test_bnb.py", 5),
-        TestFile("../srt/test_gptqmodel_dynamic.py", 102),
-        TestFile("../srt/test_vllm_dependency.py", 185),
-        # TestFile("../srt/test_gguf.py", 96),
+    "__not_in_ci__": [
+        TestFile("test_nightly_text_models_perf.py", 60),
+        TestFile("test_nightly_vlms_perf.py", 60),
     ],
 }
 
@@ -229,7 +195,30 @@ def auto_partition(files, rank, size):
     return [files[i] for i in indices]
 
 
-if __name__ == "__main__":
+def _sanity_check_suites(suites):
+    dir_base = Path(__file__).parent
+    disk_files = set(
+        [
+            str(x.relative_to(dir_base))
+            for x in dir_base.glob("**/*.py")
+            if x.name.startswith("test_")
+        ]
+    )
+
+    suite_files = set(
+        [test_file.name for _, suite in suites.items() for test_file in suite]
+    )
+
+    missing_files = sorted(list(disk_files - suite_files))
+    missing_text = "\n".join(f'TestFile("{x}"),' for x in missing_files)
+    assert len(missing_files) == 0, (
+        f"Some test files are not in test suite. "
+        f"If this is intentional, please add the following to `not_in_ci` section:\n"
+        f"{missing_text}"
+    )
+
+
+def main():
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
         "--timeout-per-file",
@@ -269,6 +258,8 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
     print(f"{args=}")
 
+    _sanity_check_suites(suites)
+
     if args.suite == "all":
         files = glob.glob("**/test_*.py", recursive=True)
     else:
@@ -283,3 +274,7 @@ if __name__ == "__main__":
 
     exit_code = run_unittest_files(files, args.timeout_per_file)
     exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

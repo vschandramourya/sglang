@@ -15,7 +15,6 @@ from sglang.srt.utils import (
     is_hip,
     is_npu,
     is_xpu,
-    supports_custom_op,
 )
 
 _is_cuda = is_cuda()
@@ -32,7 +31,7 @@ if _is_cuda:
         from flashinfer.norm import fused_add_rmsnorm
     else:
         from sgl_kernel import fused_add_rmsnorm
-    from sgl_kernel import gemma_fused_add_rmsnorm, gemma_rmsnorm, rmsnorm
+    from sgl_kernel import rmsnorm
 
 if _use_aiter:
     from aiter import rmsnorm2d_fwd as rms_norm

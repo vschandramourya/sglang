@@ -1,9 +1,3 @@
-from typing import Tuple
-
-import torch
-
-from sglang.srt.layers.logits_processor import LogitsProcessorOutput
-from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.speculative.draft_utils import (
     DraftBackendFactory as SGLANGDraftBackendFactory,
