@@ -47,8 +47,9 @@ FOLDER_NAMES = [
     "python/sglang/srt",
     "python/sglang/test",
     "python/sglang/utils.py",
+    "python/sglang/cli",
+    "python/sglang/multimodal_gen",
     "sgl-kernel",
-    "sgl-router",
     "test/lang",
     "test/srt",
     "test/README.md",
@@ -56,6 +57,12 @@ FOLDER_NAMES = [
     "python/sglang/bench_one_batch.py",
     "python/sglang/bench_one_batch_server.py",
     "python/sglang/bench_serving.py",
+    "python/sglang/bench_offline_throughput.py",
+    "python/sglang/check_env.py",
+    "python/sglang/compile_deep_gemm.py",
+    "python/sglang/global_config.py",
+    "python/sglang/launch_server.py",
+    "python/sglang/profiler.py",
 ]
 
 folder_names_for_sgl_router = [
@@ -259,13 +266,20 @@ def main():
         action="store_true",
         help="Sync sgl-router folder from OSS.",
     )
+    parser.add_argument(
+        "--sync-sglang-python",
+        action="store_true",
+        help="Sync sglang-python folder from OSS.",
+    )
     args = parser.parse_args()
 
     if args.sync_sgl_router:
         # replace folder_names with folder_names_for_sglang_router
         folder_names = folder_names_for_sgl_router
-    else:
+    elif args.sync_sglang_python:
         folder_names = FOLDER_NAMES
+    else:
+        folder_names = FOLDER_NAMES + folder_names_for_sgl_router
 
     check_dependencies()
     checkout_main(args.dry_run)
