@@ -2,8 +2,6 @@ name: Open A PR to Copy Code From OSS for sgl-router
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 10 * * *'
 
 permissions:
   contents: write
