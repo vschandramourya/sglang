@@ -29,6 +29,7 @@ python3 scripts/copy_from_oss.py --local-dir ~/projects/sglang
 import argparse
 import datetime
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -50,7 +51,6 @@ FOLDER_NAMES = [
     "python/sglang/cli",
     "python/sglang/multimodal_gen",
     "sgl-kernel",
-    "test/lang",
     "test/srt",
     "test/README.md",
     "python/pyproject.toml",
@@ -157,14 +157,26 @@ def get_source_folder(args):
 
 def sync_directories(oss_root, folder_names, dry_run):
     """Sync specified directories from oss_root to current working directory."""
-    rsync_commands = []
-    for folder_name in folder_names:
-        target_name = f"{oss_root}/{folder_name}"
-        src_name = "./" + "/".join(folder_name.split("/")[:-1])
-        cmd = f"rsync -r --delete {target_name} {src_name}"
-        rsync_commands.append(cmd)
+    skipped_items = []
 
-    for cmd in rsync_commands:
+    for folder_name in folder_names:
+        source_path = os.path.join(oss_root, folder_name)
+        if not os.path.exists(source_path):
+            skipped_items.append(folder_name)
+            print(f"⚠️ Skipping {folder_name}: source path not found at {source_path}")
+            continue
+
+        destination_dir = os.path.dirname(folder_name)
+        destination_dir = (
+            os.path.join(".", destination_dir) if destination_dir else "./"
+        )
+
+        if destination_dir != "./" and not dry_run:
+            os.makedirs(destination_dir, exist_ok=True)
+
+        cmd = "rsync -r --delete {} {}".format(
+            shlex.quote(source_path), shlex.quote(destination_dir)
+        )
         try:
             print(f"Run: {cmd}")
             if not dry_run:
@@ -172,7 +184,11 @@ def sync_directories(oss_root, folder_names, dry_run):
         except subprocess.CalledProcessError as e:
             print(f"Error executing command '{cmd}': {e}")
             raise
-    print(f"✅ Sync all folders.")
+
+    print("✅ Sync all folders.")
+    if skipped_items:
+        skipped = ", ".join(skipped_items)
+        print(f"ℹ️ Skipped missing paths: {skipped}")
 
 
 def check_for_changes():
