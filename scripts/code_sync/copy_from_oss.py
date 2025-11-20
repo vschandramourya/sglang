@@ -51,6 +51,7 @@ FOLDER_NAMES = [
     "python/sglang/cli",
     "python/sglang/multimodal_gen",
     "sgl-kernel",
+    "test/manual",
     "test/srt",
     "test/README.md",
     "python/pyproject.toml",
