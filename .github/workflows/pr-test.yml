@@ -55,7 +55,7 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          python3 run_suite.py --suite per-commit --auto-partition-id ${{ matrix.part }} --auto-partition-size 10
+          python3 run_suite.py --suite per-commit-1-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size 10
 
   unit-test-backend-2-gpu:
     needs: [check-changes]

@@ -1,154 +1,67 @@
 import argparse
 import glob
+import os
+import sys
 from pathlib import Path
+from typing import List
 
 from sglang.test.ci.ci_utils import TestFile, run_unittest_files
 
-# NOTE: please sort the test cases alphabetically by the test file name
+# Add parent test directory to import from sibling srt directory
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from srt.run_suite import suites as srt_suites
+
+
+def patch_test_file_with_prefix(prefix: str, test_file: TestFile):
+    return TestFile(os.path.join(prefix, test_file.name), test_file.estimated_time)
+
+
+patched_srt_suites = {
+    key: [
+        patch_test_file_with_prefix("../srt", srt_test_file) for srt_test_file in value
+    ]
+    for key, value in srt_suites.items()
+}
+
+
 suites = {
-    "per-commit": [
-        TestFile("../srt/lora/test_lora.py", 200),
-        TestFile("../srt/lora/test_lora_backend.py", 99),
-        TestFile("../srt/lora/test_lora_cuda_graph.py", 250),
-        TestFile("../srt/lora/test_lora_eviction.py", 200),
-        TestFile("../srt/lora/test_lora_qwen3.py", 97),
-        TestFile("../srt/lora/test_lora_radix_cache.py", 100),
-        TestFile("../srt/lora/test_multi_lora_backend.py", 60),
-        TestFile("../srt/models/test_compressed_tensors_models.py", 42),
-        TestFile("../srt/models/test_cross_encoder_models.py", 100),
-        TestFile("../srt/models/test_embedding_models.py", 73),
-        TestFile("../srt/models/test_encoder_embedding_models.py", 100),
-        TestFile("../srt/models/test_generation_models.py", 103),
-        TestFile("../srt/models/test_qwen_models.py", 82),
-        TestFile("../srt/models/test_reward_models.py", 132),
-        TestFile("../srt/models/test_transformers_models.py", 320),
-        TestFile("../srt/models/test_vlm_models.py", 437),
-        TestFile("../srt/openai_server/basic/test_openai_embedding.py", 141),
-        TestFile("../srt/openai_server/basic/test_openai_server.py", 149),
-        TestFile("../srt/openai_server/basic/test_protocol.py", 10),
-        TestFile("../srt/openai_server/basic/test_serving_chat.py", 10),
-        TestFile("../srt/openai_server/basic/test_serving_completions.py", 10),
-        TestFile("../srt/openai_server/basic/test_serving_embedding.py", 10),
-        TestFile("../srt/openai_server/features/test_enable_thinking.py", 70),
-        TestFile("../srt/openai_server/features/test_json_mode.py", 90),
-        TestFile("../srt/openai_server/features/test_openai_server_ebnf.py", 95),
-        TestFile(
-            "../srt/openai_server/features/test_openai_server_hidden_states.py", 240
-        ),
-        TestFile("../srt/openai_server/features/test_reasoning_content.py", 89),
-        TestFile(
-            "../srt/openai_server/function_call/test_openai_function_calling.py", 60
-        ),
-        TestFile("../srt/openai_server/function_call/test_tool_choice.py", 226),
-        TestFile("../srt/openai_server/validation/test_large_max_new_tokens.py", 41),
-        TestFile("../srt/openai_server/validation/test_matched_stop.py", 60),
-        TestFile(
-            "../srt/openai_server/validation/test_openai_server_ignore_eos.py", 85
-        ),
-        TestFile(
-            "../srt/openai_server/validation/test_request_length_validation.py", 31
-        ),
-        TestFile("../srt/quant/test_block_int8.py", 22),
-        TestFile("../srt/quant/test_fp8_kernel.py", 8),
-        TestFile("../srt/quant/test_int8_kernel.py", 8),
-        TestFile("../srt/quant/test_triton_scaled_mm.py", 8),
-        TestFile("../srt/quant/test_w8a8_quantization.py", 46),
-        TestFile("../srt/rl/test_update_weights_from_disk.py", 114),
-        TestFile("../srt/rl/test_update_weights_from_tensor.py", 48),
-        TestFile("../srt/test_abort.py", 51),
-        TestFile("../srt/test_chunked_prefill.py", 313),
-        TestFile("../srt/test_create_kvindices.py", 2),
-        TestFile("../srt/test_eagle_infer_a.py", 370),
-        TestFile("../srt/test_eagle_infer_b.py", 700),
-        TestFile("../srt/test_eval_fp8_accuracy.py", 303),
-        TestFile("../srt/test_fa3.py", 376),
-        TestFile("../srt/test_fused_moe.py", 30),
-        TestFile("../srt/test_gpt_oss_1gpu.py", 600),
-        TestFile("../srt/test_harmony_parser.py", 20),
-        TestFile("../srt/test_hidden_states.py", 55),
-        TestFile("../srt/test_hybrid_attn_backend.py", 100),
-        TestFile("../srt/test_input_embeddings.py", 38),
-        TestFile("../srt/test_io_struct.py", 8),
-        TestFile("../srt/test_jinja_template_utils.py", 1),
-        TestFile("../srt/test_metrics.py", 32),
-        TestFile("../srt/test_metrics_utils.py", 1),
-        TestFile("../srt/test_mla.py", 167),
-        TestFile("../srt/test_mla_flashinfer.py", 302),
-        TestFile("../srt/test_mla_fp8.py", 93),
-        TestFile("../srt/test_mla_int8_deepseek_v3.py", 429),
-        TestFile("../srt/test_multi_tokenizer.py", 230),
-        TestFile("../srt/test_no_chunked_prefill.py", 108),
-        TestFile("../srt/test_no_overlap_scheduler.py", 234),
-        TestFile("../srt/test_original_logprobs.py", 200),
-        TestFile("../srt/test_page_size.py", 60),
-        TestFile("../srt/test_penalty.py", 41),
-        TestFile("../srt/test_pytorch_sampling_backend.py", 66),
-        TestFile("../srt/test_radix_attention.py", 105),
-        TestFile("../srt/test_reasoning_parser.py", 5),
-        TestFile("../srt/test_request_queue_validation.py", 30),
-        TestFile("../srt/test_retract_decode.py", 54),
-        TestFile("../srt/test_server_args.py", 1),
-        TestFile("../srt/test_skip_tokenizer_init.py", 117),
-        TestFile("../srt/test_speculative_registry.py", 1),
-        TestFile("../srt/test_srt_endpoint.py", 130),
-        TestFile("../srt/test_srt_engine.py", 261),
-        TestFile("../srt/test_standalone_speculative_decoding.py", 250),
-        TestFile("../srt/test_start_profile.py", 60),
-        TestFile("../srt/test_torch_compile.py", 76),
-        TestFile("../srt/test_torch_compile_moe.py", 172),
-        TestFile("../srt/test_torch_native_attention_backend.py", 123),
-        TestFile("../srt/test_torchao.py", 70),
-        TestFile("../srt/test_triton_attention_backend.py", 150),
-        TestFile("../srt/test_triton_attention_kernels.py", 4),
-        TestFile("../srt/test_triton_moe_channel_fp8_kernel.py", 25),
-        TestFile("../srt/test_triton_sliding_window.py", 250),
-        TestFile("../srt/test_utils_update_weights.py", 48),
-        TestFile("../srt/test_vision_chunked_prefill.py", 175),
-        TestFile("../srt/test_vision_openai_server_a.py", 403),
-        TestFile("../srt/test_vlm_input_format.py", 300),
-        TestFile("test_mla_deepseek_v3.py", 700),
-        TestFile("test_speculative_registry_private.py", 1),
-    ],
-    "per-commit-2-gpu": [
-        TestFile("../srt/rl/test_update_weights_from_distributed.py", 103),
-        TestFile("../srt/test_data_parallelism.py", 73),
-        TestFile("../srt/test_load_weights_from_remote_instance.py", 72),
-        TestFile("../srt/test_patch_torch.py", 19),
-    ],
-    "per-commit-4-gpu": [
-        TestFile("../srt/models/test_qwen3_next_models.py", 200),
-        TestFile("../srt/test_gpt_oss_4gpu.py", 600),
-        TestFile("../srt/test_local_attn.py", 250),
-        TestFile("../srt/test_multi_instance_release_memory_occupation.py", 64),
-        TestFile("../srt/test_pp_single_node.py", 372),
-    ],
-    "per-commit-8-gpu": [
-        TestFile("../srt/lora/test_lora_llama4.py", 600),
-        TestFile("../srt/test_disaggregation_different_tp.py", 155),
-        TestFile("../srt/test_disaggregation_pp.py", 60),
-        TestFile("../srt/test_full_deepseek_v3.py", 333),
-    ],
-    "per-commit-4-gpu-b200": [
-        TestFile("test_deepseek_v3_fp4_4gpu.py", 600),
-    ],
+    "per-commit-1-gpu": patched_srt_suites["per-commit-1-gpu"],
+    "per-commit-2-gpu": patched_srt_suites["per-commit-2-gpu"],
+    "per-commit-4-gpu-b200": patched_srt_suites["per-commit-4-gpu-b200"],
     "per-commit-4-gpu-b200-cursor": [
         TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 600),
         TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 400),
-    ],
-    "per-commit-4-gpu-deepep": [
-        TestFile("../srt/ep/test_deepep_small.py", 531),
-    ],
-    "per-commit-8-gpu-deepep": [
-        TestFile("../srt/ep/test_deepep_large.py", 338),
-    ],
-    "per-commit-8-gpu-h20": [
-        TestFile("../srt/quant/test_w4a8_deepseek_v3.py", 371),
     ],
     "__not_in_ci__": [
         TestFile("test_nightly_text_models_perf.py", 60),
         TestFile("test_nightly_vlms_perf.py", 60),
     ],
 }
+
+
+# MODIFY THE SUITES ON DEMAND HERE
+def extend_suite(suite_name: str, test_files: List[TestFile]):
+    suites[suite_name].extend(test_files)
+
+
+def remove_test_file_from_suite(suite_name: str, test_file_name: str):
+    suites[suite_name] = [t for t in suites[suite_name] if test_file_name not in t.name]
+
+
+def replace_test_file_in_suite(suite_name: str, test_file_name: str):
+    suites[suite_name] = [
+        (TestFile(test_file_name, t.estimated_time) if test_file_name in t.name else t)
+        for t in suites[suite_name]
+    ]
+
+
+extend_suite("per-commit-1-gpu", [TestFile("test_speculative_registry_private.py", 1)])
+
+# TODO: add this back after the bug is fixed
+remove_test_file_from_suite("per-commit-2-gpu", "test_disaggregation_basic.py")
+
+replace_test_file_in_suite("per-commit-1-gpu", "test_mla_deepseek_v3.py")
+replace_test_file_in_suite("per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py")
 
 
 def auto_partition(files, rank, size):
@@ -255,6 +168,12 @@ def main():
         type=int,
         help="Use auto load balancing. The number of parts.",
     )
+    arg_parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        default=False,
+        help="Continue running remaining tests even if one fails (useful for nightly tests)",
+    )
     args = arg_parser.parse_args()
     print(f"{args=}")
 
@@ -272,7 +191,7 @@ def main():
 
     print("The running tests are ", [f.name for f in files])
 
-    exit_code = run_unittest_files(files, args.timeout_per_file)
+    exit_code = run_unittest_files(files, args.timeout_per_file, args.continue_on_error)
     exit(exit_code)
 
 
