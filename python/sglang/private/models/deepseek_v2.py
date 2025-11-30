@@ -13,21 +13,15 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTe
 from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.deepseek_v2 import AttentionBackendRegistry, AttnForwardMethod
 from sglang.srt.models.deepseek_v2 import (
-    DeepseekV2AttentionMLA as SGLANG_DeepseekV2AttentionMLA,
-)
-from sglang.srt.models.deepseek_v2 import (
     DeepseekV2ForCausalLM as SGLangDeepseekV2ForCausalLM,
 )
 from sglang.srt.models.deepseek_v2 import DeepseekV2Model as SGLangDeepseekV2Model
 from sglang.srt.models.deepseek_v2 import (
     _dispatch_mla_subtype,
     _get_sum_extend_prefix_lens,
-    add_forward_absorb_core_attention_backend,
 )
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import log_info_on_rank0
-
-add_forward_absorb_core_attention_backend("trtllm_mla_tgl")
 
 
 def _is_extend_without_speculative(forward_batch):
@@ -49,19 +43,7 @@ def handle_attention_trtllm_mla(attn, forward_batch):
         return _dispatch_mla_subtype(attn, forward_batch)
 
 
-def handle_trtllm_mla_tgl_attention_backend(attn, forward_batch):
-    if _is_extend_without_speculative(forward_batch):
-        return AttnForwardMethod.MHA_CHUNKED_KV
-    else:
-        return _dispatch_mla_subtype(attn, forward_batch)
-
-
 AttentionBackendRegistry.register("trtllm_mla", handle_attention_trtllm_mla)
-
-
-AttentionBackendRegistry.register(
-    "trtllm_mla_tgl", handle_trtllm_mla_tgl_attention_backend
-)
 
 load_shared = int(os.environ.get("SGL_DS3_LOAD_SHARE_NORM", "0"))
 logger = logging.getLogger(__name__)
@@ -73,28 +55,6 @@ disable_normed_states = (
 
 if disable_normed_states:
     from sglang.private.layers.cursor_layernorm import CursorRMSNorm
-
-
-class DeepseekV2AttentionMLA(SGLANG_DeepseekV2AttentionMLA):
-    def _fuse_rope_for_trtllm_mla(self, forward_batch: ForwardBatch) -> bool:
-        """
-        Check if we should skip rope and do fused rope+quantize for TRTLLM MLA decode in fp8_e4m3 path.
-        """
-        if get_global_server_args().decode_attention_backend == "trtllm_mla_tgl":
-            return (
-                forward_batch.forward_mode.is_decode_or_idle()
-                or forward_batch.forward_mode.is_target_verify()
-                or forward_batch.forward_mode.is_draft_extend(include_v2=True)
-            ) and forward_batch.attn_backend.data_type == torch.float8_e4m3fn
-        else:
-            return (
-                self.current_attention_backend == "trtllm_mla"
-                and (
-                    forward_batch.forward_mode.is_decode_or_idle()
-                    or forward_batch.forward_mode.is_target_verify()
-                )
-                and forward_batch.attn_backend.data_type == torch.float8_e4m3fn
-            )
 
 
 class DeepseekV2Model(SGLangDeepseekV2Model):

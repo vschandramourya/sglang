@@ -240,7 +240,6 @@ class PhoenixWorker(TpModelWorker):
             "flashmla": self._create_flashmla_decode_backend,
             "trtllm_mha": self._create_trtllm_mha_decode_backend,
             "trtllm_mla": self._create_trtllm_mla_decode_backend,
-            "trtllm_mla_tgl": self._create_trtllm_mla_tgl_decode_backend,
         }
 
         return self._create_backend(
@@ -261,7 +260,6 @@ class PhoenixWorker(TpModelWorker):
             "fa3": self._create_fa3_prefill_backend,
             "trtllm_mha": self._create_trtllm_mha_prefill_backend,
             "trtllm_mla": self._create_trtllm_mla_prefill_backend,
-            "trtllm_mla_tgl": self._create_trtllm_mla_tgl_prefill_backend,
         }
         backend_name = (
             "draft_attention_backend"
@@ -357,33 +355,6 @@ class PhoenixWorker(TpModelWorker):
         return TRTLLMMLAMultiStepDraftBackend(
             self.draft_model_runner, self.topk, self.speculative_num_steps
         )
-
-    def _create_trtllm_mla_tgl_decode_backend(self):
-        if not get_global_server_args().use_mla_backend:
-            raise ValueError(
-                "trtllm_mla_tgl  backend requires MLA model (use_mla_backend=True)."
-            )
-
-        from sglang.private.layers.attention.trtllm_mla_tgl_backend import (
-            TRTLLMMLATGLMultiStepDraftBackend,
-        )
-
-        self.has_prefill_wrapper_verify = True
-        return TRTLLMMLATGLMultiStepDraftBackend(
-            self.draft_model_runner, self.topk, self.speculative_num_steps
-        )
-
-    def _create_trtllm_mla_tgl_prefill_backend(self):
-        if not get_global_server_args().use_mla_backend:
-            raise ValueError(
-                "trtllm_mla_tgl backend requires MLA model (use_mla_backend=True)."
-            )
-
-        from sglang.private.layers.attention.trtllm_mla_tgl_backend import (
-            TRTLLMMLATGLBackend,
-        )
-
-        return TRTLLMMLATGLBackend(self.draft_model_runner, skip_prefill=False)
 
     def _create_flashinfer_prefill_backend(self):
         if not get_global_server_args().use_mla_backend:

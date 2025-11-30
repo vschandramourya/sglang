@@ -5,22 +5,13 @@ import os
 
 from sglang.srt.server_args import ATTENTION_BACKEND_CHOICES
 from sglang.srt.server_args import ServerArgs as SGLANG_ServerArgs
-from sglang.srt.server_args import (
-    add_attention_backend_choices,
-    auto_choose_speculative_params,
-)
-from sglang.srt.utils import get_bool_env_var, is_sm100_supported
+from sglang.srt.server_args import auto_choose_speculative_params
+from sglang.srt.utils import get_bool_env_var
 
 logger = logging.getLogger(__name__)
 
-TGL_PRIVATE_ATTENTION_BACKENDS = [
-    "trtllm_mla_tgl",
-]
-
 FLASHINFER_FP4_GEMM_BACKENDS = ["cudnn", "trtllm", "cutlass"]
 FP4_GEMM_BACKEND_CHOICES = FLASHINFER_FP4_GEMM_BACKENDS + ["sglang"]
-
-add_attention_backend_choices(TGL_PRIVATE_ATTENTION_BACKENDS)
 
 
 @dataclasses.dataclass
@@ -69,26 +60,6 @@ class ServerArgs(SGLANG_ServerArgs):
                 f"--fp4-gemm-backend=cutlass but SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM={os.environ.get('SGLANG_USE_CUTLASS_BACKEND_FOR_FP4_GEMM')}. "
                 f"Please either unset the environment variable or use a different --fp4-gemm-backend value."
             )
-
-        if (
-            self.attention_backend == "trtllm_mla_tgl"
-            or self.decode_attention_backend == "trtllm_mla_tgl"
-        ):
-            if not is_sm100_supported():
-                raise ValueError(
-                    "TRTLLM MLA TGL backend is only supported on Blackwell GPUs (SM100). Please use a different backend."
-                )
-
-            if self.page_size not in [32, 64]:
-                logger.warning(
-                    f"TensorRT-LLM MLA TGL only supports page_size of 32 or 64, changing page_size from {self.page_size} to 64."
-                )
-                self.page_size = 64
-
-            if self.kv_cache_dtype not in ["fp8_e4m3", "auto"]:
-                raise ValueError(
-                    "TensorRT-LLM MLA TGL backend only supports kv-cache-dtype of fp8_e4m3 or auto."
-                )
 
         if self.enable_trtllm_mla_fp8_prefill and not (
             self.attention_backend == "trtllm_mla"
