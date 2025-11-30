@@ -635,7 +635,8 @@ class PhoenixWorker(TpModelWorker):
                     self.page_size,
                 )
                 prefix_lens_cpu = batch.seq_lens_cpu
-                last_page_lens = prefix_lens_cpu % self.page_size
+                last_page_lens_cpu = prefix_lens_cpu % self.page_size
+                last_page_lens = last_page_lens_cpu
                 num_new_pages_per_topk = (
                     last_page_lens + self.speculative_num_steps + self.page_size - 1
                 ) // self.page_size
@@ -658,6 +659,20 @@ class PhoenixWorker(TpModelWorker):
                 )
             )
 
+        if self.page_size > 1 and self.topk > 1:
+            last_page_lens_cumsum = torch.cumsum(last_page_lens, dim=0)
+            duplicate_cache_len = torch.sum(last_page_lens_cpu).item() * (self.topk - 1)
+            target_cache_loc = torch.zeros(
+                duplicate_cache_len, dtype=torch.int32, device=self.device
+            )
+            source_cache_loc = torch.zeros(
+                duplicate_cache_len, dtype=torch.int32, device=self.device
+            )
+        else:
+            # When source_cache_loc is not needed, simply skip
+            duplicate_cache_len = 0
+            source_cache_loc, target_cache_loc, last_page_lens_cumsum = None, None, None
+
         assign_draft_cache_locs[(num_seqs,)](
             batch.req_pool_indices,
             batch.req_to_token_pool.req_to_token,
@@ -665,6 +680,10 @@ class PhoenixWorker(TpModelWorker):
             self.extend_lens,
             self.num_new_pages_per_topk,
             out_cache_loc,
+            source_cache_loc,
+            target_cache_loc,
+            last_page_lens_cumsum,
+            duplicate_cache_len,
             batch.req_to_token_pool.req_to_token.shape[1],
             self.topk,
             self.speculative_num_steps,

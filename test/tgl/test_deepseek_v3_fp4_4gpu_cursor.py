@@ -37,6 +37,10 @@ class TestDeepseekV3FP4(CustomTestCase):
             "flashinfer_trtllm",
             "--quantization",
             "modelopt_fp4",
+            "--kv-cache-dtype",
+            "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
@@ -107,6 +111,10 @@ class TestDeepseekV3FP4MTP(CustomTestCase):
             "1",
             "--speculative-num-draft-tokens",
             "4",
+            "--kv-cache-dtype",
+            "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
@@ -183,6 +191,10 @@ class TestDeepseekV3FP4CutlassMoE(CustomTestCase):
             "flashinfer_cutlass",
             "--quantization",
             "modelopt_fp4",
+            "--kv-cache-dtype",
+            "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
@@ -243,6 +255,8 @@ class TestDeepseekV3FP4MTPFP8Attn(CustomTestCase):
             "--enable-flashinfer-allreduce-fusion",
             "--kv-cache-dtype",
             "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
@@ -312,7 +326,7 @@ class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
             "--tp",
             "4",
             "--attention-backend",
-            "trtllm_mla_tgl",
+            "trtllm_mla",
             "--moe-runner-backend",
             "flashinfer_trtllm",
             "--quantization",
@@ -330,6 +344,10 @@ class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
             "fa4",
             "--speculative-attention-mode",
             "decode",
+            "--kv-cache-dtype",
+            "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
@@ -399,7 +417,7 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
             "--tp",
             "4",
             "--attention-backend",
-            "trtllm_mla_tgl",
+            "trtllm_mla",
             "--moe-runner-backend",
             "flashinfer_trtllm",
             "--quantization",
@@ -419,6 +437,8 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
             "decode",
             "--kv-cache-dtype",
             "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
@@ -503,6 +523,8 @@ class TestDeepseekV3FP4MTPIncTokenizer(CustomTestCase):
             "4",
             "--enable-inc-tokenizer",
             "--verify-inc-tokenization-correctness",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,

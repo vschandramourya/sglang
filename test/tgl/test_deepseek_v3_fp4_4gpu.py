@@ -7,7 +7,6 @@ from sglang.srt.utils import kill_process_tree
 from sglang.test.few_shot_gsm8k import run_eval as run_eval_few_shot_gsm8k
 from sglang.test.send_one import BenchArgs, send_one_prompt
 from sglang.test.test_utils import (
-    DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
     DEFAULT_URL_FOR_TEST,
     CustomTestCase,
     is_in_ci,
@@ -16,6 +15,7 @@ from sglang.test.test_utils import (
 )
 
 FULL_DEEPSEEK_V3_FP4_MODEL_PATH = "nvidia/DeepSeek-V3-0324-FP4"
+SERVER_LAUNCH_TIMEOUT = 1000
 
 
 class TestDeepseekV3FP4(CustomTestCase):
@@ -32,11 +32,15 @@ class TestDeepseekV3FP4(CustomTestCase):
             "flashinfer_trtllm",
             "--quantization",
             "modelopt_fp4",
+            "--kv-cache-dtype",
+            "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
             cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=SERVER_LAUNCH_TIMEOUT,
             other_args=other_args,
         )
 
@@ -100,11 +104,15 @@ class TestDeepseekV3FP4MTP(CustomTestCase):
             "1",
             "--speculative-num-draft-tokens",
             "4",
+            "--kv-cache-dtype",
+            "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
             cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=SERVER_LAUNCH_TIMEOUT,
             other_args=other_args,
         )
 
@@ -176,11 +184,13 @@ class TestDeepseekV3FP4CutlassMoE(CustomTestCase):
             "flashinfer_cutlass",
             "--quantization",
             "modelopt_fp4",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
             cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=SERVER_LAUNCH_TIMEOUT,
             other_args=other_args,
         )
 
@@ -236,11 +246,13 @@ class TestDeepseekV3FP4MTPFP8Attn(CustomTestCase):
             "--enable-flashinfer-allreduce-fusion",
             "--kv-cache-dtype",
             "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
             cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=SERVER_LAUNCH_TIMEOUT,
             other_args=other_args,
         )
 
@@ -305,7 +317,7 @@ class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
             "--tp",
             "4",
             "--attention-backend",
-            "trtllm_mla_tgl",
+            "trtllm_mla",
             "--moe-runner-backend",
             "flashinfer_trtllm",
             "--quantization",
@@ -323,11 +335,13 @@ class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
             "fa4",
             "--speculative-attention-mode",
             "decode",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
             cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=SERVER_LAUNCH_TIMEOUT,
             other_args=other_args,
         )
 
@@ -392,7 +406,7 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
             "--tp",
             "4",
             "--attention-backend",
-            "trtllm_mla_tgl",
+            "trtllm_mla",
             "--moe-runner-backend",
             "flashinfer_trtllm",
             "--quantization",
@@ -412,11 +426,13 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
             "decode",
             "--kv-cache-dtype",
             "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
             cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=SERVER_LAUNCH_TIMEOUT,
             other_args=other_args,
         )
 
@@ -500,11 +516,13 @@ class TestDeepseekV3FP4WithFP8AttnPrefill(CustomTestCase):
             "decode",
             "--kv-cache-dtype",
             "fp8_e4m3",
+            "--model-loader-extra-config",
+            '{"enable_multithread_load": true}',
         ]
         cls.process = popen_launch_server(
             cls.model,
             cls.base_url,
-            timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
+            timeout=SERVER_LAUNCH_TIMEOUT,
             other_args=other_args,
         )
 

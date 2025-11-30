@@ -7,6 +7,7 @@ from sglang.srt.speculative.spec_info import (
 
 
 def _create_phoenix_worker(**kwargs):
+    kwargs.pop("enable_overlap", False)
     from sglang.private.speculative.phoenix_worker import PhoenixWorker
 
     return PhoenixWorker(**kwargs)
