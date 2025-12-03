@@ -29,8 +29,8 @@ suites = {
     "per-commit-2-gpu": patched_srt_suites["per-commit-2-gpu"],
     "per-commit-4-gpu-b200": patched_srt_suites["per-commit-4-gpu-b200"],
     "per-commit-4-gpu-b200-cursor": [
-        TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 600),
-        TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 400),
+        TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 1800),
+        TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 1800),
     ],
     "__not_in_ci__": [
         TestFile("test_nightly_text_models_perf.py", 60),
