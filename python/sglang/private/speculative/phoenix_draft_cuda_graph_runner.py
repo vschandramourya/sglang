@@ -350,7 +350,38 @@ class PhoenixDraftCudaGraphRunner:
         self.positions[:raw_num_token].copy_(forward_batch.positions)
         self.topk_p[:raw_bs].copy_(forward_batch.spec_info.topk_p)
         self.topk_index[:raw_bs].copy_(forward_batch.spec_info.topk_index)
-        self.hidden_states[:raw_bs].copy_(forward_batch.spec_info.hidden_states)
+
+        hidden_states = forward_batch.spec_info.hidden_states
+        if self.phoenix_worker._is_phoenix2:
+            # Check if hidden states need projection based on dimension
+            # Phoenix2: target_capture_hidden_size (18432) needs projection to processed_target_hidden_size (6144)
+            # Check if already projected - use flag or dimension check
+            already_projected = getattr(
+                forward_batch.spec_info, "_projection_applied", False
+            )
+            expected_raw_size = self.phoenix_worker.target_capture_hidden_size
+            expected_processed_size = self.phoenix_worker.processed_target_hidden_size
+
+            current_size = hidden_states.shape[-1]
+            if not already_projected and current_size == expected_raw_size:
+                # Raw multi-layer concatenated states - need projection ONCE
+                hidden_states = self.phoenix_worker.project_target_hidden_states(
+                    hidden_states
+                )
+                forward_batch.spec_info.hidden_states = hidden_states
+                forward_batch.spec_info._projection_applied = True
+            elif current_size == expected_processed_size or already_projected:
+                # Already projected - use as-is
+                pass
+            else:
+                # Unexpected dimension - this might indicate a problem
+                logger.warning(
+                    "[PHOENIX_CUDA_GRAPH] Unexpected hidden state dimension: %d, expected %d (raw) or %d (processed)",
+                    current_size,
+                    expected_raw_size,
+                    expected_processed_size,
+                )
+        self.hidden_states[:raw_bs].copy_(hidden_states)
 
         # TODO(ch-wan): support num_token_non_padded
         if self.require_gathered_buffer:

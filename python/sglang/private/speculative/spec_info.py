@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 from sglang.srt.speculative.spec_info import (
     SpeculativeAlgorithm,
     register_speculative_algorithm,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _create_phoenix_worker(**kwargs):
@@ -19,12 +23,25 @@ phoenix_algorithm = register_speculative_algorithm(
     flags=("EAGLE",),
 )
 
+phoenix2_algorithm = register_speculative_algorithm(
+    "PHOENIX2",
+    _create_phoenix_worker,
+    flags=("EAGLE",),
+)
+
 if not hasattr(SpeculativeAlgorithm, "is_phoenix"):
 
     def _is_phoenix(self: SpeculativeAlgorithm) -> bool:
-        return self == phoenix_algorithm
+        return self in (phoenix_algorithm, phoenix2_algorithm)
 
     SpeculativeAlgorithm.is_phoenix = _is_phoenix  # type: ignore[attr-defined]
+
+if not hasattr(SpeculativeAlgorithm, "is_phoenix2"):
+
+    def _is_phoenix2(self: SpeculativeAlgorithm) -> bool:
+        return self == phoenix2_algorithm
+
+    SpeculativeAlgorithm.is_phoenix2 = _is_phoenix2  # type: ignore[attr-defined]
 
 
 __all__ = ["SpeculativeAlgorithm"]

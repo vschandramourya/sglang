@@ -2,6 +2,7 @@ import logging
 
 import torch
 
+from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.model_executor.model_runner import ModelRunner as SGLANG_ModelRunner
 from sglang.srt.server_args import ServerArgs
 
@@ -54,6 +55,33 @@ class ModelRunner(SGLANG_ModelRunner):
             )
         else:
             super().init_attention_backend()
+
+        # Phoenix layer capture must happen AFTER model is loaded but BEFORE cuda graphs
+        if self.spec_algorithm.is_phoenix() and not self.is_draft_worker:
+
+            self._setup_phoenix_layer_capture()
+
+    def _setup_phoenix_layer_capture(self):
+        """Configure Phoenix layer capture on the target model."""
+        draft_model_config = ModelConfig.from_server_args(
+            self.server_args,
+            model_path=self.server_args.speculative_draft_model_path,
+            model_revision=self.server_args.speculative_draft_model_revision,
+            is_draft_model=True,
+        )
+
+        phoenix_layers = getattr(draft_model_config.hf_config, "phoenix_layers", None)
+
+        if phoenix_layers:
+            if not isinstance(phoenix_layers, list) or len(phoenix_layers) == 0:
+                raise ValueError(
+                    f"Invalid phoenix_layers: {phoenix_layers}. Must be non-empty list."
+                )
+            logger.info(
+                "[Phoenix2] Configuring layer capture for layers: %s",
+                phoenix_layers,
+            )
+            self.model.set_eagle3_layers_to_capture(phoenix_layers)
 
     def generate_suffix_draft_tokens(self, schedule_batch, last_token_ids) -> list:
         """Generate draft tokens using suffix tree speculation."""

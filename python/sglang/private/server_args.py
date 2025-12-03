@@ -72,7 +72,7 @@ class ServerArgs(SGLANG_ServerArgs):
     def _handle_speculative_decoding(self):
         super()._handle_speculative_decoding()
 
-        if self.speculative_algorithm == "PHOENIX":
+        if self.speculative_algorithm in {"PHOENIX", "PHOENIX2"}:
             if self.max_running_requests is None:
                 self.max_running_requests = 48
             self.disable_overlap_schedule = True
@@ -131,7 +131,11 @@ class ServerArgs(SGLANG_ServerArgs):
         SGLANG_ServerArgs.add_cli_args(parser)
         for action in parser._actions:
             if action.dest == "speculative_algorithm":
-                action.choices.append("PHOENIX")
+                action.choices.extend(
+                    choice
+                    for choice in ("PHOENIX", "PHOENIX2")
+                    if choice not in action.choices
+                )
 
         parser.add_argument(
             "--draft-attention-backend",

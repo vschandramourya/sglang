@@ -50,7 +50,8 @@ logger = logging.getLogger(__name__)
 
 
 disable_normed_states = (
-    load_shared and get_global_server_args().speculative_algorithm != "PHOENIX"
+    load_shared
+    and get_global_server_args().speculative_algorithm not in {"PHOENIX", "PHOENIX2"}
 )
 
 if disable_normed_states:
