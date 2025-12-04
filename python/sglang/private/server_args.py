@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 FLASHINFER_FP4_GEMM_BACKENDS = ["cudnn", "trtllm", "cutlass"]
 FP4_GEMM_BACKEND_CHOICES = FLASHINFER_FP4_GEMM_BACKENDS + ["sglang"]
+TOOL_CHOICE_MODE_CHOICES = ["default", "disabled", "ignored"]
 
 
 @dataclasses.dataclass
@@ -36,6 +37,9 @@ class ServerArgs(SGLANG_ServerArgs):
     enable_inc_tokenizer: bool = False
     verify_inc_tokenization_correctness: bool = False
     enable_trtllm_mla_fp8_prefill: bool = False
+
+    # Tool calling
+    tool_choice_mode: str = "default"
 
     def _handle_other_validations(self):
         # Validate FP4 GEMM backend consistency
@@ -214,4 +218,11 @@ class ServerArgs(SGLANG_ServerArgs):
             "--enable-trtllm-mla-fp8-prefill",
             action="store_true",
             help="Enable FP8 prefill attention for TRTLLM MLA backend.",
+        )
+        parser.add_argument(
+            "--tool-choice-mode",
+            type=str,
+            default=ServerArgs.tool_choice_mode,
+            choices=TOOL_CHOICE_MODE_CHOICES,
+            help="Tool choice mode: 'default' allows tool_choice='required', 'disabled' rejects tool_choice='required', 'ignored' converts tool_choice='required' to 'auto'.",
         )
