@@ -48,6 +48,7 @@ class TRTLLMMLABackend(SGLANG_TRTLLMMLABackend):
         k_rope: Optional[torch.Tensor] = None,
         cos_sin_cache: Optional[torch.Tensor] = None,
         is_neox: Optional[bool] = False,
+        llama_4_scaling: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
         if (
@@ -66,6 +67,7 @@ class TRTLLMMLABackend(SGLANG_TRTLLMMLABackend):
                 k_rope,
                 cos_sin_cache,
                 is_neox,
+                llama_4_scaling,
             )
 
         # FP8 prefill PATH
@@ -91,6 +93,10 @@ class TRTLLMMLABackend(SGLANG_TRTLLMMLABackend):
             q = _concat_mla_absorb_q_general(q_nope, q_rope_reshaped)
 
         q = q.view(-1, layer.tp_q_head_num, layer.head_dim)
+
+        # Apply llama 4 scaling if provided
+        if llama_4_scaling is not None:
+            q *= llama_4_scaling
 
         if k_rope is not None:
             k = torch.cat([k, k_rope], dim=-1)
