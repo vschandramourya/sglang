@@ -288,6 +288,11 @@ def main():
         action="store_true",
         help="Sync sglang-python folder from OSS.",
     )
+    parser.add_argument(
+        "--sync-in-local",
+        action="store_true",
+        help="Sync local folder from OSS (Not in CI env).",
+    )
     args = parser.parse_args()
 
     if args.sync_sgl_router:
@@ -298,8 +303,9 @@ def main():
     else:
         folder_names = FOLDER_NAMES + folder_names_for_sgl_router
 
-    check_dependencies()
-    checkout_main(args.dry_run)
+    if not args.sync_in_local:
+        check_dependencies()
+        checkout_main(args.dry_run)
 
     oss_root, temp_dir, oss_commit = get_source_folder(args)
 
@@ -312,6 +318,10 @@ def main():
             msg = "😴 No changes detected. The code is already in sync."
             print(msg)
             write_github_step_summary(msg)
+            return
+
+        if args.sync_in_local:
+            print("✅ Changes detected in not-in-ci mode. No PR will be created.")
             return
 
         print("✅ Changes detected. Proceeding to create a PR.")
