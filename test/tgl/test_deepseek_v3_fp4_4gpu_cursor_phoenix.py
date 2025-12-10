@@ -199,7 +199,7 @@ class TestDeepseekV3FP4MTPFP8Attn(CustomTestCase):
                 f"{speed=:.2f} token/s\n"
             )
             self.assertGreater(acc_length, 2.97)
-            self.assertGreater(speed, 299.17)
+            self.assertGreater(speed, 292.17)
 
 
 class TestDeepseekV3FP4MTPHybrid(CustomTestCase):

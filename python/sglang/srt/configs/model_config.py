@@ -80,6 +80,16 @@ def get_nsa_index_n_heads(config: PretrainedConfig) -> int:
     return config.index_n_heads
 
 
+def handle_rope_parameters(config: PretrainedConfig):
+    if hasattr(config, "rope_scaling"):
+        rope_scaling = config.rope_scaling
+        if isinstance(rope_scaling, dict):
+            for k, v in rope_scaling.items():
+                if not hasattr(config, k):
+                    setattr(config, k, v)
+    return
+
+
 class ModelConfig:
     def __init__(
         self,
@@ -127,6 +137,8 @@ class ModelConfig:
             **kwargs,
         )
         self.hf_text_config = get_hf_text_config(self.hf_config)
+        handle_rope_parameters(self.hf_text_config)
+        handle_rope_parameters(self.hf_config)
         self.hf_generation_config = get_generation_config(
             self.model_path,
             trust_remote_code=trust_remote_code,
@@ -338,6 +350,7 @@ class ModelConfig:
             or "DotsVLMForCausalLM" in self.hf_config.architectures
             or "MistralLarge3ForCausalLM" in self.hf_config.architectures
             or "PixtralForConditionalGeneration" in self.hf_config.architectures
+            or "MistralLarge3ForCausalLMEagle" in self.hf_config.architectures
         ):
             self.head_dim = 256
             self.attention_arch = AttentionArch.MLA
@@ -357,9 +370,10 @@ class ModelConfig:
                 mscale_all_dim = self.hf_config.rope_scaling.get(
                     "mscale_all_dim", False
                 )
-                scaling_factor = self.hf_config.rope_scaling["factor"]
-                mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
-                self.scaling = self.scaling * mscale * mscale
+                scaling_factor = self.hf_config.rope_scaling.get("factor")
+                if scaling_factor is not None:
+                    mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
+                    self.scaling = self.scaling * mscale * mscale
 
         elif "MiniCPM3ForCausalLM" in self.hf_config.architectures:
             self.head_dim = 128
@@ -702,7 +716,16 @@ class ModelConfig:
             if self.quantization is None:
                 self.quantization = quant_method
             elif self.quantization != quant_method:
-                if (
+                # Allow auto-detection of quantization from checkpoint for draft model
+                # even if it differs from main model's quantization
+                if self.is_draft_model:
+                    logger.info(
+                        f"Draft model quantization ({quant_method}) differs from "
+                        f"main model quantization ({self.quantization}). "
+                        f"Using draft model's detected quantization: {quant_method}"
+                    )
+                    self.quantization = quant_method
+                elif (
                     self.quantization not in compatible_quantization_methods
                     or quant_method
                     not in compatible_quantization_methods[self.quantization]

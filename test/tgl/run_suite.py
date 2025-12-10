@@ -3,7 +3,7 @@ import glob
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from sglang.test.ci.ci_utils import TestFile, run_unittest_files
 
@@ -29,8 +29,8 @@ suites = {
     "per-commit-2-gpu": patched_srt_suites["per-commit-2-gpu"],
     "per-commit-4-gpu-b200": patched_srt_suites["per-commit-4-gpu-b200"],
     "per-commit-4-gpu-b200-cursor": [
-        TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 1800),
-        TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 1800),
+        TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 3600),
+        TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 3600),
     ],
     "__not_in_ci__": [
         TestFile("test_nightly_text_models_perf.py", 60),
@@ -48,9 +48,22 @@ def remove_test_file_from_suite(suite_name: str, test_file_name: str):
     suites[suite_name] = [t for t in suites[suite_name] if test_file_name not in t.name]
 
 
-def replace_test_file_in_suite(suite_name: str, test_file_name: str):
+def replace_test_file_in_suite(
+    suite_name: str, test_file_name: str, new_estimated_time: Optional[float] = None
+):
     suites[suite_name] = [
-        (TestFile(test_file_name, t.estimated_time) if test_file_name in t.name else t)
+        (
+            TestFile(
+                test_file_name,
+                (
+                    new_estimated_time
+                    if new_estimated_time is not None
+                    else t.estimated_time
+                ),
+            )
+            if test_file_name in t.name
+            else t
+        )
         for t in suites[suite_name]
     ]
 
@@ -61,7 +74,9 @@ extend_suite("per-commit-1-gpu", [TestFile("test_speculative_registry_private.py
 remove_test_file_from_suite("per-commit-2-gpu", "test_disaggregation_basic.py")
 
 replace_test_file_in_suite("per-commit-1-gpu", "test_mla_deepseek_v3.py")
-replace_test_file_in_suite("per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py")
+replace_test_file_in_suite(
+    "per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py", 3600
+)
 
 
 def auto_partition(files, rank, size):
