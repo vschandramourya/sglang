@@ -55,7 +55,7 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          python3 run_suite.py --suite per-commit-1-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size 16
+          python3 run_suite.py --suite per-commit-1-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
 
   unit-test-backend-2-gpu:
     needs: [check-changes]
@@ -77,7 +77,7 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          python3 run_suite.py --suite per-commit-2-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size 2
+          python3 run_suite.py --suite per-commit-2-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
 
   performance-test-1-gpu-part-1:
     needs: [check-changes]
@@ -268,6 +268,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        part: [0, 1, 2]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run test
+        timeout-minutes: 60
+        run: |
+          cd test/tgl
+          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+
+  unit-test-backend-4-gpu-b200-cursor:
+    needs: [check-changes]
+    if: always() && !failure() && !cancelled()
+    runs-on: b200-runner
+    strategy:
+      fail-fast: false
+      matrix:
         part: [0, 1]
     steps:
       - name: Checkout code
@@ -281,27 +303,7 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id ${{ matrix.part }} --auto-partition-size 2 --timeout-per-file 3600
-
-  unit-test-backend-4-gpu-b200-cursor:
-    needs: [check-changes]
-    if: always() && !failure() && !cancelled()
-    runs-on: b200-runner
-    strategy:
-      fail-fast: false
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
-
-      - name: Run test
-        timeout-minutes: 60
-        run: |
-          cd test/tgl
-          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id 0 --auto-partition-size 2 --timeout-per-file 3600
+          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
 
   unit-test-backend-4-gpu-b200-cursor-phoenix:
     needs: [check-changes]
@@ -309,6 +311,8 @@ jobs:
     runs-on: b200-runner
     strategy:
       fail-fast: false
+      matrix:
+        part: [0]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -321,7 +325,7 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id 1 --auto-partition-size 2 --timeout-per-file 3600
+          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor-phoenix --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
 
   pr-test-finish:
     needs: [
@@ -333,6 +337,9 @@ jobs:
       performance-test-2-gpu,
       accuracy-test-1-gpu,
       accuracy-test-2-gpu,
+      unit-test-backend-4-gpu-b200,
+      unit-test-backend-4-gpu-b200-cursor,
+      unit-test-backend-4-gpu-b200-cursor-phoenix
     ]
     if: always()
     runs-on: ubuntu-latest

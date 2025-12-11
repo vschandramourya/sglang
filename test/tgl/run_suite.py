@@ -30,6 +30,9 @@ suites = {
     "per-commit-4-gpu-b200": patched_srt_suites["per-commit-4-gpu-b200"],
     "per-commit-4-gpu-b200-cursor": [
         TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 3600),
+        TestFile("test_deepseek_v3_fp4_4gpu_cursor2.py", 3600),
+    ],
+    "per-commit-4-gpu-b200-cursor-phoenix": [
         TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 3600),
     ],
     "__not_in_ci__": [
@@ -77,6 +80,7 @@ replace_test_file_in_suite("per-commit-1-gpu", "test_mla_deepseek_v3.py")
 replace_test_file_in_suite(
     "per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py", 3600
 )
+extend_suite("per-commit-4-gpu-b200", [TestFile("test_deepseek_v3_fp4_4gpu2.py", 3600)])
 
 
 def auto_partition(files, rank, size):
