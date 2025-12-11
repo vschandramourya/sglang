@@ -174,7 +174,7 @@ class DeepseekModelNextN(nn.Module):
 
         if not forward_batch.forward_mode.is_idle():
             if residual is not None:
-                hidden_states, _ = self.shared_head.norm(hidden_states, residual)
+                hidden_states, residual = self.shared_head.norm(hidden_states, residual)
             else:
                 hidden_states = self.shared_head.norm(hidden_states)
 
@@ -187,6 +187,8 @@ class DeepseekModelNextN(nn.Module):
                     torch.cuda.current_stream(),
                 )
 
+        if residual is not None:
+            return hidden_states, residual
         return hidden_states
 
 
@@ -242,9 +244,9 @@ class DeepseekV3ForCausalLMNextN(DeepseekV3ForCausalLM):
                     self.cp_size,
                     forward_batch.seq_lens_cpu.tolist(),
                 )
-        hidden_states = self.model(input_ids, positions, forward_batch)
+        hidden_states, residual = self.model(input_ids, positions, forward_batch)
         return self.logits_processor(
-            input_ids, hidden_states, self.lm_head, forward_batch
+            input_ids, hidden_states, residual, self.lm_head, forward_batch
         )
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
