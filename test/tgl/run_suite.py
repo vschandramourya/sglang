@@ -3,9 +3,11 @@ import glob
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from sglang.test.ci.ci_utils import TestFile, run_unittest_files
+
+DEFAULT_ESTIMATED_TIME = TestFile.__dataclass_fields__["estimated_time"].default
 
 # Add parent test directory to import from sibling srt directory
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -43,44 +45,47 @@ suites = {
 
 
 # MODIFY THE SUITES ON DEMAND HERE
-def extend_suite(suite_name: str, test_files: List[TestFile]):
-    suites[suite_name].extend(test_files)
+def upsert_test_file_in_suite(
+    suite_name: str, test_file_name: str, new_estimated_time: Optional[float] = None
+):
+    for idx, test_file in enumerate(suites[suite_name]):
+        if test_file_name in test_file.name:
+            suites[suite_name][idx] = TestFile(
+                test_file_name,
+                (
+                    new_estimated_time
+                    if new_estimated_time is not None
+                    else test_file.estimated_time
+                ),
+            )
+            return
+
+    suites[suite_name].append(
+        TestFile(
+            test_file_name,
+            (
+                new_estimated_time
+                if new_estimated_time is not None
+                else DEFAULT_ESTIMATED_TIME
+            ),
+        )
+    )
 
 
 def remove_test_file_from_suite(suite_name: str, test_file_name: str):
     suites[suite_name] = [t for t in suites[suite_name] if test_file_name not in t.name]
 
 
-def replace_test_file_in_suite(
-    suite_name: str, test_file_name: str, new_estimated_time: Optional[float] = None
-):
-    suites[suite_name] = [
-        (
-            TestFile(
-                test_file_name,
-                (
-                    new_estimated_time
-                    if new_estimated_time is not None
-                    else t.estimated_time
-                ),
-            )
-            if test_file_name in t.name
-            else t
-        )
-        for t in suites[suite_name]
-    ]
-
-
-extend_suite("per-commit-1-gpu", [TestFile("test_speculative_registry_private.py", 1)])
+upsert_test_file_in_suite("per-commit-1-gpu", "test_speculative_registry_private.py", 1)
 
 # TODO: add this back after the bug is fixed
 remove_test_file_from_suite("per-commit-2-gpu", "test_disaggregation_basic.py")
 
-replace_test_file_in_suite("per-commit-1-gpu", "test_mla_deepseek_v3.py")
-replace_test_file_in_suite(
-    "per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py", 3600
+upsert_test_file_in_suite("per-commit-1-gpu", "test_mla_deepseek_v3.py", 442)
+upsert_test_file_in_suite("per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py", 3600)
+upsert_test_file_in_suite(
+    "per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu2.py", 3600
 )
-extend_suite("per-commit-4-gpu-b200", [TestFile("test_deepseek_v3_fp4_4gpu2.py", 3600)])
 
 
 def auto_partition(files, rank, size):
