@@ -104,6 +104,11 @@ echo "Installing python extras: [${EXTRAS}]"
 
 $PIP_CMD install -e "python[${EXTRAS}]" --extra-index-url https://download.pytorch.org/whl/${CU_VERSION} $PIP_INSTALL_SUFFIX
 
+# install tgl_kernel
+if [ -d ./tgl-kernel ]; then
+  $PIP_CMD install ./tgl-kernel && python3 tgl-kernel/compile_aot.py
+fi
+
 # Install router for pd-disagg test
 $PIP_CMD install sglang-router $PIP_INSTALL_SUFFIX
 

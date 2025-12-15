@@ -26,6 +26,17 @@ from sglang.srt.server_args import get_global_server_args
 
 logger = logging.getLogger(__name__)
 
+_HAS_FP8_CONVERT_KERNEL = False
+if not get_global_server_args().disable_mla_context_fp8_quantize_kernel:
+    try:
+        from tgl_kernel import mla_context_fp8_quantize
+
+        _HAS_FP8_CONVERT_KERNEL = True
+    except ImportError:
+        logger.warning("Failed to import mla_context_fp8_quantize from tgl_kernel")
+else:
+    logger.info("mla_context_fp8_quantize kernel disabled by server args")
+
 
 class TRTLLMMLABackend(SGLANG_TRTLLMMLABackend):
 
@@ -106,9 +117,12 @@ class TRTLLMMLABackend(SGLANG_TRTLLMMLABackend):
 
         # Cast q, k, v to fp8 for FP8 prefill path.. This will induce flashinfer to use fp8 kernels.
         out_dtype = q.dtype
-        q = q.to(torch.float8_e4m3fn)
-        k = k.to(torch.float8_e4m3fn)
-        v = v.to(torch.float8_e4m3fn)
+        if _HAS_FP8_CONVERT_KERNEL:
+            q, k, v, _, _ = mla_context_fp8_quantize(q, k, v, compute_scales=False)
+        else:
+            q = q.to(torch.float8_e4m3fn)
+            k = k.to(torch.float8_e4m3fn)
+            v = v.to(torch.float8_e4m3fn)
 
         output_shape = (q.shape[0], layer.tp_q_head_num, layer.v_head_dim)
         if forward_batch.attn_attend_prefix_cache:

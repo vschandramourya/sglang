@@ -21,5 +21,9 @@ RUN --mount=type=secret,id=gh_pat \
     pip install .; \
     rm -rf .git
 
+RUN cd /sgl-workspace/sglang/tgl-kernel \
+    && python3 -m pip install . \
+    && TGL_KERNEL_CUDA_ARCH_LIST=10.0 python3 compile_aot.py
+
 # Set workspace directory
 WORKDIR /sgl-workspace/sglang

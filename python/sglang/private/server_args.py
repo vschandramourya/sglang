@@ -36,7 +36,11 @@ class ServerArgs(SGLANG_ServerArgs):
     # Incremental tokenizer Related
     enable_inc_tokenizer: bool = False
     verify_inc_tokenization_correctness: bool = False
+
+    # TRTLLM MLA FP8 prefill attention
     enable_trtllm_mla_fp8_prefill: bool = False
+    disable_mla_context_fp8_quantize_kernel: bool = False
+    disable_mla_k_transform_kernel: bool = False
 
     # Tool calling
     tool_choice_mode: str = "default"
@@ -218,6 +222,16 @@ class ServerArgs(SGLANG_ServerArgs):
             "--enable-trtllm-mla-fp8-prefill",
             action="store_true",
             help="Enable FP8 prefill attention for TRTLLM MLA backend.",
+        )
+        parser.add_argument(
+            "--disable-mla-context-fp8-quantize-kernel",
+            action="store_true",
+            help="Disable the MLA context FP8 quantization kernel.",
+        )
+        parser.add_argument(
+            "--disable-mla-k-transform-kernel",
+            action="store_true",
+            help="Disable the MLA K transform kernel.",
         )
         parser.add_argument(
             "--tool-choice-mode",

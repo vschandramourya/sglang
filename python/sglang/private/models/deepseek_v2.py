@@ -4,6 +4,7 @@ import os
 from typing import Iterable, Optional, Tuple
 
 import torch
+from sgl_kernel import merge_state_v2
 from transformers import PretrainedConfig
 
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
@@ -12,6 +13,9 @@ from sglang.srt.layers.utils import get_layer_id
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.srt.models.deepseek_v2 import AttentionBackendRegistry, AttnForwardMethod
+from sglang.srt.models.deepseek_v2 import (
+    DeepseekV2AttentionMLA as SGLangDeepseekV2AttentionMLA,
+)
 from sglang.srt.models.deepseek_v2 import (
     DeepseekV2ForCausalLM as SGLangDeepseekV2ForCausalLM,
 )
@@ -22,6 +26,19 @@ from sglang.srt.models.deepseek_v2 import (
 )
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import log_info_on_rank0
+
+logger = logging.getLogger(__name__)
+
+_HAS_FLASHINFER_K_TRANSFORM = False
+if not get_global_server_args().disable_mla_k_transform_kernel:
+    try:
+        from tgl_kernel import k_transform
+
+        _HAS_FLASHINFER_K_TRANSFORM = True
+    except ImportError:
+        logger.warning("Failed to import k_transform from tgl_kernel")
+else:
+    logger.info("mla k_transform kernel disabled by server args")
 
 
 def _is_extend_without_speculative(forward_batch):
@@ -46,7 +63,6 @@ def handle_attention_trtllm_mla(attn, forward_batch):
 AttentionBackendRegistry.register("trtllm_mla", handle_attention_trtllm_mla)
 
 load_shared = int(os.environ.get("SGL_DS3_LOAD_SHARE_NORM", "0"))
-logger = logging.getLogger(__name__)
 
 
 disable_normed_states = (
@@ -56,6 +72,61 @@ disable_normed_states = (
 
 if disable_normed_states:
     from sglang.private.layers.cursor_layernorm import CursorRMSNorm
+
+
+class DeepseekV2AttentionMLA(SGLangDeepseekV2AttentionMLA):
+    def _chunked_prefix_attn_mha(
+        self,
+        q: torch.Tensor,
+        accum_output: torch.Tensor,
+        accum_lse: torch.Tensor,
+        forward_batch: ForwardBatch,
+    ) -> torch.Tensor:
+
+        assert forward_batch.num_prefix_chunks is not None
+        for i in range(forward_batch.num_prefix_chunks):
+            forward_batch.set_prefix_chunk_idx(i)
+
+            kv_indices = forward_batch.prefix_chunk_kv_indices[i]
+            # Fetch latent cache from memory pool with precomputed chunked kv indices
+            kv_a_normed, k_pe = self._get_mla_kv_buffer(
+                kv_indices, q.dtype, forward_batch
+            )
+            kv = self.kv_b_proj(kv_a_normed)[0]
+            if _HAS_FLASHINFER_K_TRANSFORM:
+                k_pe_2d = k_pe.squeeze(1) if k_pe.ndim == 3 else k_pe
+                k = k_transform(kv, k_pe_2d)
+                kv = kv.view(
+                    -1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim
+                )
+                v = kv[..., self.qk_nope_head_dim :]
+            else:
+                kv = kv.view(
+                    -1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim
+                )
+                v = kv[..., self.qk_nope_head_dim :]
+                k_nope = kv[..., : self.qk_nope_head_dim]
+
+                k = torch.empty(
+                    (
+                        k_nope.shape[0],
+                        self.num_local_heads,
+                        self.qk_nope_head_dim + self.qk_rope_head_dim,
+                    ),
+                    dtype=v.dtype,
+                    device=v.device,
+                )
+                k[..., : self.qk_nope_head_dim] = k_nope
+                k[..., self.qk_nope_head_dim :] = k_pe
+
+            output, lse = self.attn_mha(q, k, v, forward_batch, save_kv_cache=False)
+            tmp_output = torch.empty_like(accum_output)
+            tmp_lse = torch.empty_like(accum_lse)
+            merge_state_v2(output, lse, accum_output, accum_lse, tmp_output, tmp_lse)
+            accum_output, accum_lse = tmp_output, tmp_lse
+            del kv, k, v, output, lse, tmp_output, tmp_lse
+
+        return accum_output
 
 
 class DeepseekV2Model(SGLangDeepseekV2Model):

@@ -1,0 +1,6 @@
+apache-tvm-ffi>=0.1.4,<0.2
+filelock
+ninja
+numpy
+packaging>=24.2
+torch
