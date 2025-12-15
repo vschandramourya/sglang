@@ -67,7 +67,7 @@ FOLDER_NAMES = [
 ]
 
 folder_names_for_sgl_router = [
-    "sgl-router",
+    "sgl-model-gateway",
 ]
 
 private_repo = "togethercomputer/tgl"
