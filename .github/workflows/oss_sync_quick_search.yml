@@ -1,0 +1,200 @@
+name: Quick Sync & Test with SGLang
+run-name: >
+  Quick Test |
+  sglang=${{ inputs.sglang_commit_id || 'main-latest' }} |
+  by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      sglang_commit_id:
+        description: 'SGLang commit ID to test (optional, defaults to main branch latest)'
+        required: false
+        type: string
+  schedule:
+    - cron: '0 */3 * * *'  # Run every 3 hours
+
+concurrency:
+  group: upstream-test-schedule-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  unit-test-backend-4-gpu-b200:
+    runs-on: b200-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0, 1, 2]
+    steps:
+      - name: Checkout TGL repository
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+
+      - name: Clone SGLang to temp directory
+        run: |
+          # Create unique temp directory (like tempfile.mkdtemp())
+          TEMP_DIR=$(mktemp -d)
+          echo "SGLANG_DIR=$TEMP_DIR" >> $GITHUB_ENV
+
+          # Clone sglang
+          git clone https://github.com/sgl-project/sglang.git "$TEMP_DIR"
+          cd "$TEMP_DIR"
+
+          # Checkout specific commit if provided, otherwise use main
+          if [ -n "${{ inputs.sglang_commit_id }}" ]; then
+            echo "Checking out specified commit: ${{ inputs.sglang_commit_id }}"
+            git checkout ${{ inputs.sglang_commit_id }}
+          else
+            echo "Using main branch latest commit"
+          fi
+
+          # Record the commit information
+          COMMIT_ID=$(git rev-parse HEAD)
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          echo "SGLANG_COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
+          echo "SGLANG_COMMIT_SHORT=$COMMIT_SHORT" >> $GITHUB_ENV
+
+          echo "## SGLang Commit Info" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit ID: \`$COMMIT_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Short Commit: \`$COMMIT_SHORT\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Install rsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync
+
+      - name: Sync code from SGLang to TGL
+        run: |
+          python3 scripts/code_sync/copy_from_oss.py --local-dir "${{ env.SGLANG_DIR }}" --sync-in-local
+          echo "- Code sync completed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Install dependencies
+        run: |
+          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run TGL test
+        timeout-minutes: 60
+        run: |
+          cd test/tgl
+          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+
+  unit-test-backend-4-gpu-b200-cursor:
+    runs-on: b200-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0, 1]
+    steps:
+      - name: Checkout TGL repository
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+
+      - name: Clone SGLang to temp directory
+        run: |
+          # Create unique temp directory (like tempfile.mkdtemp())
+          TEMP_DIR=$(mktemp -d)
+          echo "SGLANG_DIR=$TEMP_DIR" >> $GITHUB_ENV
+
+          # Clone sglang
+          git clone https://github.com/sgl-project/sglang.git "$TEMP_DIR"
+          cd "$TEMP_DIR"
+
+          # Checkout specific commit if provided, otherwise use main
+          if [ -n "${{ inputs.sglang_commit_id }}" ]; then
+            echo "Checking out specified commit: ${{ inputs.sglang_commit_id }}"
+            git checkout ${{ inputs.sglang_commit_id }}
+          else
+            echo "Using main branch latest commit"
+          fi
+
+          # Record the commit information
+          COMMIT_ID=$(git rev-parse HEAD)
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          echo "SGLANG_COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
+          echo "SGLANG_COMMIT_SHORT=$COMMIT_SHORT" >> $GITHUB_ENV
+
+          echo "## SGLang Commit Info" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit ID: \`$COMMIT_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Short Commit: \`$COMMIT_SHORT\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Install rsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync
+
+      - name: Sync code from SGLang to TGL
+        run: |
+          python3 scripts/code_sync/copy_from_oss.py --local-dir "${{ env.SGLANG_DIR }}" --sync-in-local
+          echo "- Code sync completed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Install dependencies
+        run: |
+          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run TGL test
+        timeout-minutes: 60
+        run: |
+          cd test/tgl
+          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+
+  unit-test-backend-4-gpu-b200-cursor-phoenix:
+    runs-on: b200-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0]
+    steps:
+      - name: Checkout TGL repository
+        uses: actions/checkout@v4
+        with:
+          ref: 'main'
+
+      - name: Clone SGLang to temp directory
+        run: |
+          # Create unique temp directory (like tempfile.mkdtemp())
+          TEMP_DIR=$(mktemp -d)
+          echo "SGLANG_DIR=$TEMP_DIR" >> $GITHUB_ENV
+
+          # Clone sglang
+          git clone https://github.com/sgl-project/sglang.git "$TEMP_DIR"
+          cd "$TEMP_DIR"
+
+          # Checkout specific commit if provided, otherwise use main
+          if [ -n "${{ inputs.sglang_commit_id }}" ]; then
+            echo "Checking out specified commit: ${{ inputs.sglang_commit_id }}"
+            git checkout ${{ inputs.sglang_commit_id }}
+          else
+            echo "Using main branch latest commit"
+          fi
+
+          # Record the commit information
+          COMMIT_ID=$(git rev-parse HEAD)
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          echo "SGLANG_COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
+          echo "SGLANG_COMMIT_SHORT=$COMMIT_SHORT" >> $GITHUB_ENV
+
+          echo "## SGLang Commit Info" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit ID: \`$COMMIT_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Short Commit: \`$COMMIT_SHORT\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Install rsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync
+
+      - name: Sync code from SGLang to TGL
+        run: |
+          python3 scripts/code_sync/copy_from_oss.py --local-dir "${{ env.SGLANG_DIR }}" --sync-in-local
+          echo "- Code sync completed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Install dependencies
+        run: |
+          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run TGL test
+        timeout-minutes: 60
+        run: |
+          cd test/tgl
+          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor-phoenix --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
