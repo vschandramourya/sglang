@@ -19,8 +19,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  stage-b-test-4-gpu-b200:
+    runs-on: b200-runner
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout SGLang
+        run: |
+          rm -rf sglang
+          git clone https://github.com/sgl-project/sglang.git
+          cd sglang
+
+          # Checkout specific commit if provided, otherwise use main
+          if [ -n "${{ inputs.sglang_commit_id }}" ]; then
+            echo "Checking out specified commit: ${{ inputs.sglang_commit_id }}"
+            git checkout ${{ inputs.sglang_commit_id }}
+          else
+            echo "Using main branch latest commit"
+          fi
+
+          # Record the commit information
+          COMMIT_ID=$(git rev-parse HEAD)
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          echo "COMMIT_ID=$COMMIT_ID" >> $GITHUB_ENV
+          echo "COMMIT_SHORT=$COMMIT_SHORT" >> $GITHUB_ENV
+
+          echo "## SGLang Commit Info" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit ID: \`$COMMIT_ID\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Short Commit: \`$COMMIT_SHORT\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Install dependencies
+        run: |
+          cd sglang
+          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run test
+        timeout-minutes: 60
+        run: |
+          cd sglang/test/srt
+          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-stage-b --timeout-per-file 1800
+
+
   unit-test-backend-4-gpu-b200:
     runs-on: b200-runner
+    needs: stage-b-test-4-gpu-b200
     strategy:
       fail-fast: false
       matrix:
@@ -51,12 +93,12 @@ jobs:
           echo "- Short Commit: \`$COMMIT_SHORT\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Install dependencies
-        working-directory: sglang
         run: |
+          cd sglang
           IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
 
       - name: Run test
         timeout-minutes: 60
         run: |
-          cd test/srt
+          cd sglang/test/srt
           IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
