@@ -3,4 +3,3 @@ filelock
 ninja
 numpy
 packaging>=24.2
-torch
