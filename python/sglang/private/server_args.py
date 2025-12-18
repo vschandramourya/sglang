@@ -40,7 +40,7 @@ class ServerArgs(SGLANG_ServerArgs):
     # TRTLLM MLA FP8 prefill attention
     enable_trtllm_mla_fp8_prefill: bool = False
     disable_mla_context_fp8_quantize_kernel: bool = False
-    disable_mla_k_transform_kernel: bool = False
+    enable_mla_k_transform_kernel: bool = False
 
     # Tool calling
     tool_choice_mode: str = "default"
@@ -229,9 +229,9 @@ class ServerArgs(SGLANG_ServerArgs):
             help="Disable the MLA context FP8 quantization kernel.",
         )
         parser.add_argument(
-            "--disable-mla-k-transform-kernel",
+            "--enable-mla-k-transform-kernel",
             action="store_true",
-            help="Disable the MLA K transform kernel.",
+            help="Enable the MLA K transform kernel.",
         )
         parser.add_argument(
             "--tool-choice-mode",

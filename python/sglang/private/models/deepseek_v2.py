@@ -30,7 +30,7 @@ from sglang.srt.utils import log_info_on_rank0
 logger = logging.getLogger(__name__)
 
 _HAS_FLASHINFER_K_TRANSFORM = False
-if not get_global_server_args().disable_mla_k_transform_kernel:
+if get_global_server_args().enable_mla_k_transform_kernel:
     try:
         from tgl_kernel import k_transform
 
