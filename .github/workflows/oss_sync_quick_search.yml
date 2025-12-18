@@ -11,15 +11,38 @@ on:
         description: 'SGLang commit ID to test (optional, defaults to main branch latest)'
         required: false
         type: string
-  schedule:
-    - cron: '0 */3 * * *'  # Run every 3 hours
+      run_b200_test:
+        description: 'Run per-commit-4-gpu-b200 test suite'
+        required: false
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+        default: 'false'
+      run_b200_cursor_test:
+        description: 'Run per-commit-4-gpu-b200-cursor test suite'
+        required: false
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+        default: 'false'
+      run_b200_cursor_phoenix_test:
+        description: 'Run per-commit-4-gpu-b200-cursor-phoenix test suite'
+        required: false
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+        default: 'false'
 
 concurrency:
-  group: upstream-test-schedule-${{ github.ref }}
+  group: upstream-test-schedule-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
   unit-test-backend-4-gpu-b200:
+    if: ${{ github.event_name == 'schedule' || inputs.run_b200_test == 'true' }}
     runs-on: b200-runner
     strategy:
       fail-fast: false
@@ -80,6 +103,7 @@ jobs:
           IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
 
   unit-test-backend-4-gpu-b200-cursor:
+    if: ${{ github.event_name == 'schedule' || inputs.run_b200_cursor_test == 'true' }}
     runs-on: b200-runner
     strategy:
       fail-fast: false
@@ -140,6 +164,7 @@ jobs:
           IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
 
   unit-test-backend-4-gpu-b200-cursor-phoenix:
+    if: ${{ github.event_name == 'schedule' || inputs.run_b200_cursor_phoenix_test == 'true' }}
     runs-on: b200-runner
     strategy:
       fail-fast: false
