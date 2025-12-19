@@ -30,6 +30,7 @@ def _get_k_transform_module():
 def k_transform(
     v_full: torch.Tensor,
     k_pe: torch.Tensor,
+    num_heads,
 ) -> torch.Tensor:
     r"""Transform kernel: Extract k_nope from v_full and broadcast k_pe to form K.
 
@@ -91,18 +92,10 @@ def k_transform(
         )
 
     # Check dimensions
-    EXPECTED_V_FULL_DIM = 8192
-    EXPECTED_QK_ROPE_DIM = 64
-    if v_full.shape[1] != EXPECTED_V_FULL_DIM:
-        raise ValueError(
-            f"v_full must have shape [*, {EXPECTED_V_FULL_DIM}], "
-            f"got v_full.shape[1]={v_full.shape[1]}"
-        )
-    if k_pe.shape[1] != EXPECTED_QK_ROPE_DIM:
-        raise ValueError(
-            f"k_pe must have shape [*, {EXPECTED_QK_ROPE_DIM}], "
-            f"got k_pe.shape[1]={k_pe.shape[1]}"
-        )
+    QK_NOPE_DIM = 128
+    QK_ROPE_DIM = 64
+    K_DIM_PER_HEAD = QK_NOPE_DIM + QK_ROPE_DIM
+    V_HEAD_DIM = 128
 
     # Check dtype
     if v_full.dtype != k_pe.dtype:
@@ -126,10 +119,8 @@ def k_transform(
         )
 
     # Allocate output tensor
-    NUM_HEADS = 32
-    K_DIM_PER_HEAD = 192
     K = torch.empty(
-        M, NUM_HEADS, K_DIM_PER_HEAD, dtype=v_full.dtype, device=v_full.device
+        M, num_heads, K_DIM_PER_HEAD, dtype=v_full.dtype, device=v_full.device
     )
 
     # Get module and run kernel

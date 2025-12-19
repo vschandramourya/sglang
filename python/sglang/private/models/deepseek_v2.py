@@ -95,7 +95,7 @@ class DeepseekV2AttentionMLA(SGLangDeepseekV2AttentionMLA):
             kv = self.kv_b_proj(kv_a_normed)[0]
             if _HAS_FLASHINFER_K_TRANSFORM:
                 k_pe_2d = k_pe.squeeze(1) if k_pe.ndim == 3 else k_pe
-                k = k_transform(kv, k_pe_2d)
+                k = k_transform(kv, k_pe_2d, self.num_local_heads)
                 kv = kv.view(
                     -1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim
                 )

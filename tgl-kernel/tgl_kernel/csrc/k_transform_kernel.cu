@@ -33,8 +33,7 @@ __global__ void
 kTransformKernelWarpPerRowVec(Element *__restrict__ K, // [M, NUM_HEADS, 192]
                               const Element *__restrict__ v_full, // [M, 8192]
                               const Element *__restrict__ k_pe,   // [M, 64]
-                              int M) {
-  constexpr int NUM_HEADS = 32;
+                              int M, int num_heads, int v_full_stride) {
   constexpr int QK_NOPE_DIM = 128;
   constexpr int QK_ROPE_DIM = 64;
   constexpr int K_DIM_PER_HEAD = QK_NOPE_DIM + QK_ROPE_DIM; // 192
@@ -61,9 +60,9 @@ kTransformKernelWarpPerRowVec(Element *__restrict__ K, // [M, NUM_HEADS, 192]
   }
   __syncwarp();
 
-  // row pointers
-  const Element *v_full_row = v_full + row * 8192;
-  Element *K_row = K + row * (NUM_HEADS * K_DIM_PER_HEAD);
+  // row pointers - calculate stride dynamically
+  const Element *v_full_row = v_full + row * v_full_stride;
+  Element *K_row = K + row * (num_heads * K_DIM_PER_HEAD);
 
   // 2) For each head, copy k_nope + broadcast k_pe
   // Note: v_full has interleaved layout [head0(k_nope, v), head1(k_nope, v),
@@ -71,7 +70,7 @@ kTransformKernelWarpPerRowVec(Element *__restrict__ K, // [M, NUM_HEADS, 192]
   constexpr int V_HEAD_DIM = 128;
   constexpr int KV_PER_HEAD = QK_NOPE_DIM + V_HEAD_DIM; // 256
 
-  for (int head = 0; head < NUM_HEADS; ++head) {
+  for (int head = 0; head < num_heads; ++head) {
     const Element *k_nope_src = v_full_row + head * KV_PER_HEAD;
     Element *k_nope_dst = K_row + head * K_DIM_PER_HEAD;
     Element *k_pe_dst = k_nope_dst + QK_NOPE_DIM;
@@ -105,7 +104,8 @@ kTransformKernelWarpPerRowVec(Element *__restrict__ K, // [M, NUM_HEADS, 192]
  */
 template <typename Element>
 void invokeKTransform(Element *K, const Element *v_full, const Element *k_pe,
-                      int M, cudaStream_t stream) {
+                      int M, int num_heads, int v_full_stride,
+                      cudaStream_t stream) {
   constexpr int WARPS_PER_BLOCK = 4;
   constexpr int THREADS_PER_BLOCK = WARPS_PER_BLOCK * 32; // 256 threads
   constexpr int QK_ROPE_DIM = 64;
@@ -115,21 +115,22 @@ void invokeKTransform(Element *K, const Element *v_full, const Element *k_pe,
   size_t smem_size = WARPS_PER_BLOCK * QK_ROPE_DIM * sizeof(Element);
 
   kTransformKernelWarpPerRowVec<Element>
-      <<<num_blocks, THREADS_PER_BLOCK, smem_size, stream>>>(K, v_full, k_pe,
-                                                             M);
+      <<<num_blocks, THREADS_PER_BLOCK, smem_size, stream>>>(
+          K, v_full, k_pe, M, num_heads, v_full_stride);
 }
 
 // Explicit template instantiations
 template void invokeKTransform<half>(half *K, const half *v_full,
-                                     const half *k_pe, int M,
-                                     cudaStream_t stream);
+                                     const half *k_pe, int M, int num_heads,
+                                     int v_full_stride, cudaStream_t stream);
 template void invokeKTransform<__nv_bfloat16>(__nv_bfloat16 *K,
                                               const __nv_bfloat16 *v_full,
                                               const __nv_bfloat16 *k_pe, int M,
+                                              int num_heads, int v_full_stride,
                                               cudaStream_t stream);
 template void invokeKTransform<float>(float *K, const float *v_full,
-                                      const float *k_pe, int M,
-                                      cudaStream_t stream);
+                                      const float *k_pe, int M, int num_heads,
+                                      int v_full_stride, cudaStream_t stream);
 
 } // namespace k_transform
 } // namespace private_kernels

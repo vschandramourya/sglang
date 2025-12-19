@@ -29,13 +29,14 @@ namespace flashinfer {
  * @brief TVM FFI binding for k_transform kernel for MLA attention
  *
  * This function performs the transformation:
- * - Extracts k_nope from first 4096 elements of v_full [M, 8192]
- * - Broadcasts k_pe [M, 64] to all 32 heads
- * - Outputs K [M, 32, 192] = [M, 32, 128+64]
+ * - Extracts k_nope from first (num_heads * QK_NOPE_DIM) elements of v_full
+ * - Broadcasts k_pe [M, QK_ROPE_DIM] to all num_heads heads
+ * - Outputs K [M, num_heads, K_DIM_PER_HEAD] = [M, num_heads,
+ * QK_NOPE_DIM+QK_ROPE_DIM]
  *
- * @param K Output tensor [M, 32, 192] (contiguous)
- * @param v_full Input tensor [M, 8192] (contiguous)
- * @param k_pe Input tensor [M, 64] (contiguous)
+ * @param K Output tensor [M, num_heads, K_DIM_PER_HEAD] (bfloat16, contiguous)
+ * @param v_full Input tensor [M, v_full_stride] (bfloat16, contiguous)
+ * @param k_pe Input tensor [M, QK_ROPE_DIM] (bfloat16, contiguous)
  */
 void TRTLLMKTransform(TensorView K, TensorView v_full, TensorView k_pe) {
   // Input validation
@@ -48,27 +49,23 @@ void TRTLLMKTransform(TensorView K, TensorView v_full, TensorView k_pe) {
   int64_t M = v_full.shape()[0];
   TVM_FFI_ICHECK(M > 0) << "M (sequence length) must be > 0";
 
-  // Kernel expects hardcoded dimensions: NUM_HEADS=32, QK_NOPE_DIM=128,
-  // QK_ROPE_DIM=64, K_DIM_PER_HEAD=192 v_full must be [M, 8192] where 8192 =
-  // NUM_HEADS * (QK_NOPE_DIM + V_HEAD_DIM) = 32 * (128 + 128)
-  constexpr int64_t EXPECTED_NUM_HEADS = 32;
-  constexpr int64_t EXPECTED_QK_NOPE_DIM = 128;
-  constexpr int64_t EXPECTED_QK_ROPE_DIM = 64;
-  constexpr int64_t EXPECTED_K_DIM_PER_HEAD = 192; // QK_NOPE_DIM + QK_ROPE_DIM
-  constexpr int64_t EXPECTED_V_HEAD_DIM = 128;
-  constexpr int64_t EXPECTED_V_FULL_DIM =
-      EXPECTED_NUM_HEADS * (EXPECTED_QK_NOPE_DIM + EXPECTED_V_HEAD_DIM); // 8192
+  // Expected dimensions (these are consistent across models)
+  constexpr int32_t QK_NOPE_DIM = 128;
+  constexpr int32_t QK_ROPE_DIM = 64;
+  constexpr int32_t K_DIM_PER_HEAD = QK_NOPE_DIM + QK_ROPE_DIM; // 192
+  constexpr int32_t V_HEAD_DIM = 128;
+
+  int32_t num_heads = static_cast<int32_t>(K.size(1));
+  int32_t v_full_stride = static_cast<int32_t>(v_full.size(1));
 
   // Validate attention dimensions match kernel expectations
-  TVM_FFI_ICHECK(K.shape()[1] == EXPECTED_NUM_HEADS &&
-                 K.shape()[2] == EXPECTED_K_DIM_PER_HEAD &&
-                 k_pe.shape()[1] == EXPECTED_QK_ROPE_DIM &&
-                 v_full.shape()[1] == EXPECTED_V_FULL_DIM)
+  TVM_FFI_ICHECK(k_pe.shape()[1] == QK_ROPE_DIM &&
+                 K.shape()[2] == K_DIM_PER_HEAD &&
+                 v_full_stride == num_heads * (QK_NOPE_DIM + V_HEAD_DIM))
       << "K transform kernel expects: "
-      << "K[*, " << EXPECTED_NUM_HEADS << ", " << EXPECTED_K_DIM_PER_HEAD
-      << "], "
-      << "k_pe[*, " << EXPECTED_QK_ROPE_DIM << "], "
-      << "v_full[*, " << EXPECTED_V_FULL_DIM << "]. "
+      << "k_pe[*, " << QK_ROPE_DIM << "], "
+      << "K[*, " << num_heads << ", " << K_DIM_PER_HEAD << "], "
+      << "v_full[*, " << num_heads * (QK_NOPE_DIM + V_HEAD_DIM) << "]. "
       << "Got: K[*, " << K.shape()[1] << ", " << K.shape()[2] << "], "
       << "k_pe[*, " << k_pe.shape()[1] << "], "
       << "v_full[*, " << v_full.shape()[1] << "]";
@@ -96,20 +93,22 @@ void TRTLLMKTransform(TensorView K, TensorView v_full, TensorView k_pe) {
     invokeKTransform<half>(static_cast<half *>(K.data_ptr()),
                            static_cast<half *>(v_full.data_ptr()),
                            static_cast<half *>(k_pe.data_ptr()),
-                           static_cast<int>(M), stream);
+                           static_cast<int>(M), num_heads, v_full_stride,
+                           stream);
   } else if (dtype.code == kDLBfloat && dtype.bits == 16) {
     // BF16
     invokeKTransform<__nv_bfloat16>(
         static_cast<__nv_bfloat16 *>(K.data_ptr()),
         static_cast<__nv_bfloat16 *>(v_full.data_ptr()),
         static_cast<__nv_bfloat16 *>(k_pe.data_ptr()), static_cast<int>(M),
-        stream);
+        num_heads, v_full_stride, stream);
   } else if (dtype.code == kDLFloat && dtype.bits == 32) {
     // FP32
     invokeKTransform<float>(static_cast<float *>(K.data_ptr()),
                             static_cast<float *>(v_full.data_ptr()),
                             static_cast<float *>(k_pe.data_ptr()),
-                            static_cast<int>(M), stream);
+                            static_cast<int>(M), num_heads, v_full_stride,
+                            stream);
   } else {
     TVM_FFI_LOG_AND_THROW(NotImplementedError)
         << "Unsupported data type for k_transform. Supported types: float16, "

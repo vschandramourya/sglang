@@ -27,20 +27,27 @@ namespace k_transform {
  * form K.
  *
  * This kernel performs the following transformation:
- * 1. Extracts k_nope from the first 4096 elements of v_full [M, 8192]
- * 2. Broadcasts k_pe [M, 64] to all 32 heads
- * 3. Concatenates k_nope + k_pe per head to form K [M, 32, 192]
+ * 1. Extracts k_nope from the first (NUM_HEADS * QK_NOPE_DIM) elements of
+ * v_full
+ * 2. Broadcasts k_pe [M, QK_ROPE_DIM] to all NUM_HEADS heads
+ * 3. Concatenates k_nope + k_pe per head to form K [M, NUM_HEADS,
+ * K_DIM_PER_HEAD]
  *
  * @tparam Element Data type (half, __nv_bfloat16, float)
- * @param K Output tensor [M, NUM_HEADS, K_DIM_PER_HEAD] = [M, 32, 192]
- * @param v_full Input tensor [M, 8192] containing k_nope in first 4096 elements
- * @param k_pe Input tensor [M, 64] positional encoding to broadcast
+ * @param K Output tensor [M, NUM_HEADS, K_DIM_PER_HEAD]
+ * @param v_full Input tensor [M, V_FULL_STRIDE] containing k_nope in first
+ * (NUM_HEADS * QK_NOPE_DIM) elements
+ * @param k_pe Input tensor [M, QK_ROPE_DIM] positional encoding to broadcast
  * @param M Number of rows (sequence length)
+ * @param num_heads Number of attention heads per TP rank
+ * @param v_full_stride Stride of v_full tensor (NUM_HEADS * (QK_NOPE_DIM +
+ * V_HEAD_DIM))
  * @param stream CUDA stream
  */
 template <typename Element>
 void invokeKTransform(Element *K, const Element *v_full, const Element *k_pe,
-                      int M, cudaStream_t stream);
+                      int M, int num_heads, int v_full_stride,
+                      cudaStream_t stream);
 
 } // namespace k_transform
 } // namespace private_kernels

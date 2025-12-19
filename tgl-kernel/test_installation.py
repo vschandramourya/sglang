@@ -78,7 +78,7 @@ def test_k_transform():
         print(f"   Input kv shape: {kv.shape}")
         print(f"   Input k_pe shape: {k_pe.shape}")
 
-        K = k_transform(kv, k_pe)
+        K = k_transform(kv, k_pe, 32)
 
         print(f"   Output K shape: {K.shape}")
 
