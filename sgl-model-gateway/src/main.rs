@@ -5,10 +5,13 @@ use sgl_model_gateway::{
     config::{
         CircuitBreakerConfig, ConfigError, ConfigResult, DiscoveryConfig, HealthCheckConfig,
         HistoryBackend, MetricsConfig, OracleConfig, PolicyConfig, PostgresConfig, RetryConfig,
-        RouterConfig, RoutingMode, TokenizerCacheConfig,
+        RouterConfig, RoutingMode, TokenizerCacheConfig, TraceConfig,
     },
     core::ConnectionMode,
-    metrics::PrometheusConfig,
+    observability::{
+        metrics::PrometheusConfig,
+        otel_trace::{is_otel_enabled, shutdown_otel},
+    },
     server::{self, ServerConfig},
     service_discovery::ServiceDiscoveryConfig,
     version,
@@ -212,10 +215,19 @@ struct CliArgs {
     prometheus_host: String,
 
     #[arg(long, num_args = 0..)]
+    prometheus_duration_buckets: Vec<f64>,
+
+    #[arg(long, num_args = 0..)]
     request_id_headers: Vec<String>,
 
     #[arg(long, default_value_t = 1800)]
     request_timeout_secs: u64,
+
+    /// Grace period in seconds to wait for in-flight requests during shutdown.
+    /// When the server receives SIGTERM/SIGINT, it will stop accepting new connections
+    /// and wait up to this duration for existing streaming requests to complete.
+    #[arg(long, default_value_t = 180)]
+    shutdown_grace_period_secs: u64,
 
     #[arg(long, default_value_t = -1)]
     max_concurrent_requests: i32,
@@ -345,6 +357,21 @@ struct CliArgs {
 
     #[arg(long)]
     mcp_config_path: Option<String>,
+
+    #[arg(long, default_value_t = false)]
+    enable_wasm: bool,
+
+    #[arg(long, default_value_t = false)]
+    enable_trace: bool,
+
+    #[arg(long, default_value = "localhost:4317")]
+    otlp_traces_endpoint: String,
+
+    #[arg(long)]
+    tls_cert_path: Option<String>,
+
+    #[arg(long)]
+    tls_key_path: Option<String>,
 }
 
 enum OracleConnectSource {
@@ -536,6 +563,11 @@ impl CliArgs {
             host: self.prometheus_host.clone(),
         });
 
+        let trace_config = Some(TraceConfig {
+            enable_trace: self.enable_trace,
+            otlp_traces_endpoint: self.otlp_traces_endpoint.clone(),
+        });
+
         let mut all_urls = Vec::new();
         match &mode {
             RoutingMode::Regular { worker_urls } => {
@@ -621,6 +653,7 @@ impl CliArgs {
             .maybe_api_key(self.api_key.as_ref())
             .maybe_discovery(discovery)
             .maybe_metrics(metrics)
+            .maybe_trace(trace_config)
             .maybe_log_dir(self.log_dir.as_ref())
             .maybe_request_id_headers(
                 (!self.request_id_headers.is_empty()).then(|| self.request_id_headers.clone()),
@@ -637,7 +670,9 @@ impl CliArgs {
             .dp_aware(self.dp_aware)
             .retries(!self.disable_retries)
             .circuit_breaker(!self.disable_circuit_breaker)
-            .igw(self.enable_igw);
+            .enable_wasm(self.enable_wasm)
+            .igw(self.enable_igw)
+            .maybe_server_cert_and_key(self.tls_cert_path.as_ref(), self.tls_key_path.as_ref());
 
         builder.build()
     }
@@ -662,6 +697,11 @@ impl CliArgs {
         let prometheus_config = Some(PrometheusConfig {
             port: self.prometheus_port,
             host: self.prometheus_host.clone(),
+            duration_buckets: if self.prometheus_duration_buckets.is_empty() {
+                None
+            } else {
+                Some(self.prometheus_duration_buckets.clone())
+            },
         });
 
         ServerConfig {
@@ -679,6 +719,7 @@ impl CliArgs {
             } else {
                 Some(self.request_id_headers.clone())
             },
+            shutdown_grace_period_secs: self.shutdown_grace_period_secs,
         }
     }
 }
@@ -764,6 +805,8 @@ Provide --worker-urls or PD flags as usual.",
     let server_config = cli_args.to_server_config(router_config);
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async move { server::startup(server_config).await })?;
-
+    if is_otel_enabled() {
+        shutdown_otel();
+    }
     Ok(())
 }

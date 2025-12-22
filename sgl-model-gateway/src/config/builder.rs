@@ -1,7 +1,7 @@
 use super::{
     CircuitBreakerConfig, ConfigError, ConfigResult, DiscoveryConfig, HealthCheckConfig,
     HistoryBackend, MetricsConfig, OracleConfig, PolicyConfig, PostgresConfig, RetryConfig,
-    RouterConfig, RoutingMode, TokenizerCacheConfig,
+    RouterConfig, RoutingMode, TokenizerCacheConfig, TraceConfig,
 };
 use crate::{core::ConnectionMode, mcp::McpConfig};
 
@@ -14,6 +14,8 @@ pub struct RouterConfigBuilder {
     client_cert_path: Option<String>,
     client_key_path: Option<String>,
     ca_cert_paths: Vec<String>,
+    server_cert_path: Option<String>,
+    server_key_path: Option<String>,
     mcp_config_path: Option<String>,
 }
 
@@ -29,6 +31,8 @@ impl RouterConfigBuilder {
             client_cert_path: None,
             client_key_path: None,
             ca_cert_paths: Vec::new(),
+            server_cert_path: None,
+            server_key_path: None,
             mcp_config_path: None,
         }
     }
@@ -297,6 +301,24 @@ impl RouterConfigBuilder {
         self
     }
 
+    // ===================== Otel Trace ====================
+
+    pub fn enable_trace<S: Into<String>>(mut self, endpoint: S) -> Self {
+        self.config.trace_config = Some(TraceConfig {
+            enable_trace: true,
+            otlp_traces_endpoint: endpoint.into(),
+        });
+        self
+    }
+
+    pub fn disable_trace(mut self) -> Self {
+        self.config.trace_config = Some(TraceConfig {
+            enable_trace: false,
+            otlp_traces_endpoint: "".to_string(),
+        });
+        self
+    }
+
     // ==================== Logging ====================
 
     pub fn log_dir<S: Into<String>>(mut self, dir: S) -> Self {
@@ -324,6 +346,13 @@ impl RouterConfigBuilder {
     /// Use proxy mode
     pub fn disable_igw(mut self) -> Self {
         self.config.enable_igw = false;
+        self
+    }
+
+    // ==================== WASM ====================
+
+    pub fn enable_wasm(mut self, enable: bool) -> Self {
+        self.config.enable_wasm = enable;
         self
     }
 
@@ -454,6 +483,11 @@ impl RouterConfigBuilder {
         self
     }
 
+    pub fn maybe_trace(mut self, trace_config: Option<TraceConfig>) -> Self {
+        self.config.trace_config = trace_config;
+        self
+    }
+
     pub fn maybe_log_dir(mut self, dir: Option<impl Into<String>>) -> Self {
         self.config.log_dir = dir.map(|d| d.into());
         self
@@ -552,6 +586,30 @@ impl RouterConfigBuilder {
         self
     }
 
+    // ==================== Server TLS ====================
+
+    /// Both paths must be provided together. Files read during build()
+    pub fn server_cert_and_key<S1: Into<String>, S2: Into<String>>(
+        mut self,
+        cert_path: S1,
+        key_path: S2,
+    ) -> Self {
+        self.server_cert_path = Some(cert_path.into());
+        self.server_key_path = Some(key_path.into());
+        self
+    }
+
+    /// Files read during build()
+    pub fn maybe_server_cert_and_key(
+        mut self,
+        cert_path: Option<impl Into<String>>,
+        key_path: Option<impl Into<String>>,
+    ) -> Self {
+        self.server_cert_path = cert_path.map(|p| p.into());
+        self.server_key_path = key_path.map(|p| p.into());
+        self
+    }
+
     // ==================== MCP ====================
 
     /// Config file loaded during build()
@@ -579,6 +637,9 @@ impl RouterConfigBuilder {
     pub fn build_with_validation(mut self, validate: bool) -> ConfigResult<RouterConfig> {
         // Read mTLS certificates from paths if provided
         self = self.read_mtls_certificates()?;
+
+        // Read Server TLS certificates from paths if provided
+        self = self.read_server_certificates()?;
 
         // Read MCP config from path if provided
         self = self.read_mcp_config()?;
@@ -642,6 +703,33 @@ impl RouterConfigBuilder {
         Ok(self)
     }
 
+    /// Internal method to read Server TLS certificates from paths
+    fn read_server_certificates(mut self) -> ConfigResult<Self> {
+        match (&self.server_cert_path, &self.server_key_path) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert = std::fs::read(cert_path).map_err(|e| ConfigError::ValidationFailed {
+                    reason: format!(
+                        "Failed to read server certificate from {}: {}",
+                        cert_path, e
+                    ),
+                })?;
+                let key = std::fs::read(key_path).map_err(|e| ConfigError::ValidationFailed {
+                    reason: format!("Failed to read server key from {}: {}", key_path, e),
+                })?;
+                self.config.server_cert = Some(cert);
+                self.config.server_key = Some(key);
+            }
+            (None, None) => {}
+            _ => {
+                return Err(ConfigError::ValidationFailed {
+                    reason: "Both --tls-cert-path and --tls-key-path must be specified together"
+                        .to_string(),
+                });
+            }
+        }
+        Ok(self)
+    }
+
     /// Internal method to read MCP config from path
     fn read_mcp_config(mut self) -> ConfigResult<Self> {
         if let Some(mcp_config_path) = &self.mcp_config_path {
@@ -696,11 +784,13 @@ mod tests {
             .to_builder()
             .port(4000)
             .enable_metrics("0.0.0.0", 29000)
+            .enable_trace("localhost:4317")
             .build()
             .unwrap();
 
         assert_eq!(modified.port, 4000);
         assert!(modified.metrics.is_some());
+        assert!(modified.trace_config.is_some());
     }
 
     /// Test complex routing mode helper method

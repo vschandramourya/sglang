@@ -4,11 +4,11 @@ use std::{
 };
 
 use reqwest::Client;
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     config::RouterConfig,
-    core::{workflow::WorkflowEngine, ConnectionMode, JobQueue, LoadMonitor, WorkerRegistry},
+    core::{ConnectionMode, JobQueue, LoadMonitor, WorkerRegistry, WorkerService},
     data_connector::{
         create_storage, ConversationItemStorage, ConversationStorage, ResponseStorage,
     },
@@ -23,6 +23,8 @@ use crate::{
         traits::Tokenizer,
     },
     tool_parser::ParserFactory as ToolParserFactory,
+    wasm::{config::WasmRuntimeConfig, module_manager::WasmModuleManager},
+    workflow::WorkflowEngine,
 };
 
 /// Error type for AppContext builder
@@ -57,6 +59,8 @@ pub struct AppContext {
     pub worker_job_queue: Arc<OnceLock<Arc<JobQueue>>>,
     pub workflow_engine: Arc<OnceLock<Arc<WorkflowEngine>>>,
     pub mcp_manager: Arc<OnceLock<Arc<McpManager>>>,
+    pub wasm_manager: Option<Arc<WasmModuleManager>>,
+    pub worker_service: Arc<WorkerService>,
 }
 
 pub struct AppContextBuilder {
@@ -76,6 +80,7 @@ pub struct AppContextBuilder {
     worker_job_queue: Option<Arc<OnceLock<Arc<JobQueue>>>>,
     workflow_engine: Option<Arc<OnceLock<Arc<WorkflowEngine>>>>,
     mcp_manager: Option<Arc<OnceLock<Arc<McpManager>>>>,
+    wasm_manager: Option<Arc<WasmModuleManager>>,
 }
 
 impl AppContext {
@@ -115,6 +120,7 @@ impl AppContextBuilder {
             worker_job_queue: None,
             workflow_engine: None,
             mcp_manager: None,
+            wasm_manager: None,
         }
     }
 
@@ -207,12 +213,31 @@ impl AppContextBuilder {
         self
     }
 
+    pub fn wasm_manager(mut self, wasm_manager: Option<Arc<WasmModuleManager>>) -> Self {
+        self.wasm_manager = wasm_manager;
+        self
+    }
+
     pub fn build(self) -> Result<AppContext, AppContextBuildError> {
         let router_config = self
             .router_config
             .ok_or(AppContextBuildError("router_config"))?;
         let configured_reasoning_parser = router_config.reasoning_parser.clone();
         let configured_tool_parser = router_config.tool_call_parser.clone();
+
+        let worker_registry = self
+            .worker_registry
+            .ok_or(AppContextBuildError("worker_registry"))?;
+        let worker_job_queue = self
+            .worker_job_queue
+            .ok_or(AppContextBuildError("worker_job_queue"))?;
+
+        // Create WorkerService from the already-built components
+        let worker_service = Arc::new(WorkerService::new(
+            worker_registry.clone(),
+            worker_job_queue.clone(),
+            router_config.clone(),
+        ));
 
         Ok(AppContext {
             client: self.client.ok_or(AppContextBuildError("client"))?,
@@ -221,9 +246,7 @@ impl AppContextBuilder {
             tokenizer: self.tokenizer,
             reasoning_parser_factory: self.reasoning_parser_factory,
             tool_parser_factory: self.tool_parser_factory,
-            worker_registry: self
-                .worker_registry
-                .ok_or(AppContextBuildError("worker_registry"))?,
+            worker_registry,
             policy_registry: self
                 .policy_registry
                 .ok_or(AppContextBuildError("policy_registry"))?,
@@ -240,15 +263,15 @@ impl AppContextBuilder {
             load_monitor: self.load_monitor,
             configured_reasoning_parser,
             configured_tool_parser,
-            worker_job_queue: self
-                .worker_job_queue
-                .ok_or(AppContextBuildError("worker_job_queue"))?,
+            worker_job_queue,
             workflow_engine: self
                 .workflow_engine
                 .ok_or(AppContextBuildError("workflow_engine"))?,
             mcp_manager: self
                 .mcp_manager
                 .ok_or(AppContextBuildError("mcp_manager"))?,
+            wasm_manager: self.wasm_manager,
+            worker_service,
         })
     }
 
@@ -272,6 +295,7 @@ impl AppContextBuilder {
             .with_workflow_engine()
             .with_mcp_manager(&router_config)
             .await?
+            .with_wasm_manager(&router_config)?
             .router_config(router_config))
     }
 
@@ -306,7 +330,7 @@ impl AppContextBuilder {
         // Force rustls backend when TLS is configured
         if has_tls_config {
             client_builder = client_builder.use_rustls_tls();
-            info!("Using rustls TLS backend for TLS/mTLS connections");
+            debug!("Using rustls TLS backend for TLS/mTLS connections");
         }
 
         // Configure mTLS client identity if provided (certificates already loaded during config creation)
@@ -314,7 +338,7 @@ impl AppContextBuilder {
             let identity = reqwest::Identity::from_pem(identity_pem)
                 .map_err(|e| format!("Failed to create client identity: {}", e))?;
             client_builder = client_builder.identity(identity);
-            info!("mTLS client authentication enabled");
+            debug!("mTLS client authentication enabled");
         }
 
         // Add CA certificates for verifying worker TLS (certificates already loaded during config creation)
@@ -324,7 +348,7 @@ impl AppContextBuilder {
             client_builder = client_builder.add_root_certificate(cert);
         }
         if !config.ca_certificates.is_empty() {
-            info!(
+            debug!(
                 "Added {} CA certificate(s) for worker verification",
                 config.ca_certificates.len()
             );
@@ -483,7 +507,7 @@ impl AppContextBuilder {
         let mcp_manager_lock = Arc::new(OnceLock::new());
 
         // Always create with empty config and defaults
-        info!("Initializing MCP manager with empty config and default settings (5 min TTL, 100 max connections)");
+        debug!("Initializing MCP manager with empty config and default settings (5 min TTL, 100 max connections)");
 
         let empty_config = crate::mcp::McpConfig {
             servers: Vec::new(),
@@ -503,6 +527,19 @@ impl AppContextBuilder {
             .map_err(|_| "Failed to set MCP manager in OnceLock".to_string())?;
 
         self.mcp_manager = Some(mcp_manager_lock);
+        Ok(self)
+    }
+
+    /// Create wasm manager if enabled in config
+    fn with_wasm_manager(mut self, config: &RouterConfig) -> Result<Self, String> {
+        self.wasm_manager = if config.enable_wasm {
+            Some(Arc::new(
+                WasmModuleManager::new(WasmRuntimeConfig::default())
+                    .map_err(|e| format!("Failed to initialize WASM module manager: {}", e))?,
+            ))
+        } else {
+            None
+        };
         Ok(self)
     }
 }
