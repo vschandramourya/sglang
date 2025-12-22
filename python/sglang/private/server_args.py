@@ -2,6 +2,7 @@ import argparse
 import dataclasses
 import logging
 import os
+from typing import Optional
 
 from sglang.srt.server_args import ATTENTION_BACKEND_CHOICES
 from sglang.srt.server_args import ServerArgs as SGLANG_ServerArgs
@@ -44,6 +45,9 @@ class ServerArgs(SGLANG_ServerArgs):
 
     # Tool calling
     tool_choice_mode: str = "default"
+
+    # Speculative decoding
+    speculative_draft_model_quantization: Optional[str] = "unquant"
 
     def _handle_other_validations(self):
         # Validate FP4 GEMM backend consistency

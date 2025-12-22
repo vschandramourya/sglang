@@ -24,6 +24,10 @@ from sglang.srt.distributed import (
     patch_tensor_parallel_group,
 )
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+from sglang.srt.layers.moe.utils import (
+    speculative_moe_a2a_backend_context,
+    speculative_moe_backend_context,
+)
 from sglang.srt.layers.sampler import get_token_ids_logprobs, get_top_logprobs
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.tp_worker import TpModelWorker
@@ -133,8 +137,7 @@ class PhoenixWorker(TpModelWorker):
             self.hot_token_id = None
 
         # Init draft worker
-        with empty_context():
-            server_args.quantization = None
+        with empty_context(), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
             super().__init__(
                 server_args=server_args,
                 gpu_id=gpu_id,
@@ -196,7 +199,9 @@ class PhoenixWorker(TpModelWorker):
         self.draft_tp_context = (
             draft_tp_context if server_args.enable_dp_attention else empty_context
         )
-        with self.draft_tp_context(self.draft_model_runner.tp_group):
+        with self.draft_tp_context(
+            self.draft_model_runner.tp_group
+        ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
             self.init_attention_backend()
             self.init_cuda_graphs()
 
@@ -485,7 +490,9 @@ class PhoenixWorker(TpModelWorker):
             logits_output, next_token_ids, seq_lens_cpu = self.forward_target_extend(
                 batch
             )
-            with self.draft_tp_context(self.draft_model_runner.tp_group):
+            with self.draft_tp_context(
+                self.draft_model_runner.tp_group
+            ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
                 self.forward_draft_extend(
                     batch, logits_output.hidden_states, next_token_ids, seq_lens_cpu
                 )
@@ -497,13 +504,17 @@ class PhoenixWorker(TpModelWorker):
                 accept_length=[],
             )
         else:
-            with self.draft_tp_context(self.draft_model_runner.tp_group):
+            with self.draft_tp_context(
+                self.draft_model_runner.tp_group
+            ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
                 spec_info = self.draft(batch)
             logits_output, verify_output, model_worker_batch, can_run_cuda_graph = (
                 self.verify(batch, spec_info)
             )
 
-            with self.draft_tp_context(self.draft_model_runner.tp_group):
+            with self.draft_tp_context(
+                self.draft_model_runner.tp_group
+            ), speculative_moe_backend_context(), speculative_moe_a2a_backend_context():
                 # NOTE: We should use `check_forward_draft_extend_after_decode`
                 # when DP attention is enabled, but it is slow. Skip it for now.
                 if (
