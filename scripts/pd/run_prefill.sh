@@ -26,6 +26,7 @@ python3 -m sglang.launch_server \
   --model-loader-extra-config '{"enable_multithread_load": true, "num_threads": 8}' \
   --served-model-name "cursor/dsv31-gb200-tgl-test-02" \
   --enable-metrics \
+  --enable-cache-report \
   --enable-flashinfer-allreduce-fusion \
   --kv-cache-dtype fp8_e4m3 \
   --page-size 64 \
