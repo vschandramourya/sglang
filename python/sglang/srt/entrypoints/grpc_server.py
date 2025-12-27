@@ -210,7 +210,10 @@ class SGLangSchedulerServicer(sglang_scheduler_pb2_grpc.SglangSchedulerServicer)
         sampling_params.normalize(tokenizer=None)
 
         # Create health check request
-        is_generation = self.scheduler_info.get("is_generation", True)
+        is_generation = self.scheduler_info.get("is_generation")
+        if is_generation is None:
+            is_generation = not self.server_args.is_embedding
+
         if is_generation:
             health_req = TokenizedGenerateReqInput(
                 rid=rid,
@@ -229,10 +232,14 @@ class SGLangSchedulerServicer(sglang_scheduler_pb2_grpc.SglangSchedulerServicer)
                 health_req.bootstrap_host = FAKE_BOOTSTRAP_HOST
                 health_req.bootstrap_room = 0
         else:
+            sampling_params.max_new_tokens = 0
             health_req = TokenizedEmbeddingReqInput(
                 rid=rid,
                 input_text="",
                 input_ids=[0],
+                image_inputs={"mm_items": []},
+                token_type_ids=[0],
+                sampling_params=sampling_params,
             )
 
         # Submit health check request
@@ -455,10 +462,22 @@ class SGLangSchedulerServicer(sglang_scheduler_pb2_grpc.SglangSchedulerServicer)
         input_text = grpc_req.tokenized.original_text
         input_ids = list(grpc_req.tokenized.input_ids)
 
+        # Convert sampling params
+        sampling_params = self._convert_sampling_params(grpc_req.sampling_params)
+
+        # For embedding requests, max_new_tokens should be 0.
+        # The scheduler logic expects an integer, not None.
+        sampling_params.max_new_tokens = 0
+
+        sampling_params.normalize(tokenizer=None)
+
         return TokenizedEmbeddingReqInput(
             rid=grpc_req.request_id,
             input_text=input_text,
             input_ids=input_ids,
+            image_inputs={"mm_items": []},
+            token_type_ids=list(grpc_req.token_type_ids),
+            sampling_params=sampling_params,
         )
 
     def _convert_sampling_params(
