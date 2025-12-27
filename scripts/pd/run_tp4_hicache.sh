@@ -39,4 +39,8 @@ python3 -m sglang.launch_server \
   --log-requests \
   --log-requests-level 0 \
   --enable-cache-report \
+  --hicache-ratio 3.0 \
+  --enable-hierarchical-cache \
+  --hicache-io-backend kernel \
+  --hicache-write-policy write_through \
   --enable-inc-tokenizer

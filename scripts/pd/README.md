@@ -1,5 +1,7 @@
 ## PD Development Guide
 
+> Current PD is caught up with commit d252d7ab
+
 ### PD Local Setup
 
 The PD setup looks like the following:
@@ -28,10 +30,9 @@ dx ywang-prefill
 ```
 
 You need to modify the router config, as it is always changing. Simply exec into your container and locate your
-scripts. You can find them when you run setup
-
+scripts. Your scripts can be found in $PD_SCRIPTS_DIR. If you want to use a centralized code source to control the behavior of your server. Copy it under `/data/<your_username>/`:
 ```
-Your scripts can be found in ...
+export PYTHONPATH=/data/<username>/tgl/python/
 ```
 
 To start the prefill node:
@@ -68,3 +69,20 @@ ens10f0np0.674: 10.168.9.69/21 (VLAN sub-interface; MTU 9000)
 
 ### Useful Tips
 Use /data/ib-traffic-monitor to monitor the traffic through IB.
+
+To run simulation tool, check out https://github.com/togethercomputer/sim/blob/dev locally and run:
+
+```
+python3 sim_tgl.py   --server http://0.0.0.0:12345 --model cursor/dsv31-gb200-tgl-test-02     --system-prompt-len 5000     --initial-qps 0.1     --max-qps 0.8   --max-inflight 32     --ramp-duration 10     --sustain-duration 600     --window 30     --gpus 4     --generation-length-mean 559     --generation-length-median 306     --acc-len 1.0   --mtp-overhead-factor 1.0     --max-prompt-tokens 215000     --poisson  --poisson-shape 2     --new-session-rate 0.05  --session-decay-lambda 0.005     --initial-sessions 7  --random-seed 123  --initial-prefix-mean 44000 --initial-prefix-median 39000 --new-tokens-mean 5500 --new-tokens-median 1400 --dashboard-mode --name cursor-fast-v2-exp-tp4-hicache-tgl-0.5qps
+```
+
+Then run the dashboard with
+
+```
+python3 dashboard.py --data-dir benchmarks
+```
+
+Then portforward with:
+```
+ssh -L 8050:10.168.9.69:8050  ywang@research-dev-b200-04.cloud.together.ai
+```

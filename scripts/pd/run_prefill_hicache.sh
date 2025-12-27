@@ -36,4 +36,8 @@ python3 -m sglang.launch_server \
   --chunked-prefill-size 32768 \
   --max-prefill-tokens 32768 \
   --mem-fraction-static 0.86 \
+  --hicache-ratio 3.0 \
+  --enable-hierarchical-cache \
+  --hicache-io-backend kernel \
+  --hicache-write-policy write_through \
   --enable-inc-tokenizer
