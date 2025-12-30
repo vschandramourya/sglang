@@ -12,10 +12,6 @@ from sglang.srt.server_args import ServerArgs
 
 logger = logging.getLogger(__name__)
 
-# Fields that should always be excluded from request parameters
-# because they contain non-JSON-serializable objects (e.g., ImageData, tensors)
-ALWAYS_EXCLUDE_FIELDS = {"image_data", "video_data", "audio_data", "input_embeds"}
-
 
 class RequestMetricsExporter(ABC):
     """Abstract base class for exporting request-level performance metrics to a data destination."""
@@ -39,11 +35,7 @@ class RequestMetricsExporter(ABC):
         request_params = {}
         for field in dataclasses.fields(obj):
             field_name = field.name
-            # Skip fields in obj_skip_names or fields that are always excluded (not JSON serializable)
-            if (
-                field_name not in self.obj_skip_names
-                and field_name not in ALWAYS_EXCLUDE_FIELDS
-            ):
+            if field_name not in self.obj_skip_names:
                 value = getattr(obj, field_name)
                 # Convert to serializable format
                 if value is not None:
