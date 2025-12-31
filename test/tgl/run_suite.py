@@ -76,8 +76,6 @@ def remove_test_file_from_suite(suite_name: str, test_file_name: str):
     suites[suite_name] = [t for t in suites[suite_name] if test_file_name not in t.name]
 
 
-upsert_test_file_in_suite("per-commit-1-gpu", "test_speculative_registry_private.py", 1)
-
 # TODO: add this back after the bug is fixed
 remove_test_file_from_suite("per-commit-2-gpu", "test_disaggregation_basic.py")
 
