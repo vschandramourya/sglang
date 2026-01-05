@@ -7,6 +7,7 @@ from sglang.srt.managers.scheduler import (
     GenerationBatchResult as SGLANG_GenerationBatchResult,
 )
 from sglang.srt.managers.scheduler import Scheduler as SGLANG_Scheduler
+from sglang.srt.utils.hf_transformers_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -24,3 +25,16 @@ class Scheduler(SGLANG_Scheduler):
                 batch_result.next_token_ids,
                 batch_result.accept_length,
             )
+
+    def init_tokenizer(self):
+        super().init_tokenizer()
+        if self.server_args.disable_fast_image_processor:
+            try:
+                self.tokenizer = get_tokenizer(
+                    self.server_args.tokenizer_path,
+                    tokenizer_mode=self.server_args.tokenizer_mode,
+                    trust_remote_code=self.server_args.trust_remote_code,
+                    revision=self.server_args.revision,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load fast tokenizer: {e}")

@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from packaging.version import Version
 
-from sglang.srt.custom_op import CustomOp
+from sglang.srt.layers.utils import MultiPlatformOp
 from sglang.srt.utils import (
     cpu_has_amx_support,
     get_bool_env_var,
@@ -48,7 +48,7 @@ if _is_npu:
     import torch_npu
 
 
-class CursorRMSNorm(CustomOp):
+class CursorRMSNorm(MultiPlatformOp):
     def __init__(
         self,
         hidden_size: int,
