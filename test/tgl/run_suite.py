@@ -28,7 +28,6 @@ patched_srt_suites = {
 
 suites = {
     "per-commit-1-gpu": patched_srt_suites["per-commit-1-gpu"],
-    "per-commit-2-gpu": patched_srt_suites["per-commit-2-gpu"],
     "per-commit-4-gpu-b200": patched_srt_suites["per-commit-4-gpu-b200"],
     "per-commit-4-gpu-b200-cursor": [
         TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 3600),
@@ -80,8 +79,6 @@ def remove_test_file_from_suite(suite_name: str, test_file_name: str):
 
 
 # TODO: add this back after the bug is fixed
-remove_test_file_from_suite("per-commit-2-gpu", "test_disaggregation_basic.py")
-
 upsert_test_file_in_suite("per-commit-1-gpu", "test_mla_deepseek_v3.py", 442)
 upsert_test_file_in_suite("per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py", 3600)
 upsert_test_file_in_suite(

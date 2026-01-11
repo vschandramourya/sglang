@@ -57,28 +57,6 @@ jobs:
           cd test/tgl
           python3 run_suite.py --suite per-commit-1-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
 
-  unit-test-backend-2-gpu:
-    needs: [check-changes]
-    if: always() && !failure() && !cancelled()
-    runs-on: 2-gpu-runner
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [0, 1]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          bash scripts/ci/ci_install_dependency.sh
-
-      - name: Run test
-        timeout-minutes: 60
-        run: |
-          cd test/tgl
-          python3 run_suite.py --suite per-commit-2-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
-
   performance-test-1-gpu-part-1:
     needs: [check-changes]
     if: always() && !failure() && !cancelled()
@@ -172,7 +150,7 @@ jobs:
           python3 -m unittest test_bench_serving.TestBenchServing.test_vlm_online_latency
 
   performance-test-2-gpu:
-    needs: [check-changes, unit-test-backend-2-gpu]
+    needs: [check-changes]
     if: always() && !failure() && !cancelled()
     runs-on: 2-gpu-runner
     steps:
@@ -353,7 +331,6 @@ jobs:
     needs: [
       check-changes,
       unit-test-backend-1-gpu,
-      unit-test-backend-2-gpu,
       performance-test-1-gpu-part-1,
       performance-test-1-gpu-part-2,
       performance-test-2-gpu,

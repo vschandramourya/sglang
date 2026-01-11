@@ -32,7 +32,7 @@ repos:
         args:
           - --select=F401,F821
           - --fix
-        files: ^(benchmark/|docs/|examples/|python/sglang/|sgl-router/py_*|test/)
+        files: ^(benchmark/|docs/|examples/|python/sglang/|sgl-model-gateway/py_*|test/)
         exclude: |
           (?x)^(
           .*/__init__\.py$|
@@ -76,3 +76,11 @@ repos:
         args:
           - '--keep-output'
           - '--extra-keys=metadata.kernelspec metadata.language_info.version'
+  - repo: local
+    hooks:
+      - id: sort-ci-permissions
+        name: sort CI_PERMISSIONS.json
+        entry: python3 .github/update_ci_permission.py --sort-only
+        language: system
+        files: ^\.github/CI_PERMISSIONS\.json$
+        pass_filenames: false

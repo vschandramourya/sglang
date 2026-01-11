@@ -12,7 +12,14 @@ from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.utils import get_layer_id
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 from sglang.srt.model_loader.weight_utils import default_weight_loader
-from sglang.srt.models.deepseek_v2 import AttentionBackendRegistry, AttnForwardMethod
+from sglang.srt.models.deepseek_common.attention_backend_handler import (
+    AttentionBackendRegistry,
+    _dispatch_mla_subtype,
+    _get_sum_extend_prefix_lens,
+)
+from sglang.srt.models.deepseek_common.attention_forward_methods.forward_methods import (
+    AttnForwardMethod,
+)
 from sglang.srt.models.deepseek_v2 import (
     DeepseekV2AttentionMLA as SGLangDeepseekV2AttentionMLA,
 )
@@ -20,10 +27,6 @@ from sglang.srt.models.deepseek_v2 import (
     DeepseekV2ForCausalLM as SGLangDeepseekV2ForCausalLM,
 )
 from sglang.srt.models.deepseek_v2 import DeepseekV2Model as SGLangDeepseekV2Model
-from sglang.srt.models.deepseek_v2 import (
-    _dispatch_mla_subtype,
-    _get_sum_extend_prefix_lens,
-)
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import log_info_on_rank0
 
