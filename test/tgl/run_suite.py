@@ -37,6 +37,9 @@ suites = {
     "per-commit-4-gpu-b200-cursor-phoenix": [
         TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 3600),
     ],
+    "per-commit-8-gpu-h200-tgl": [
+        TestFile("test_llama4-maverick.py", 3600),
+    ],
     "__not_in_ci__": [
         TestFile("test_nightly_text_models_perf.py", 60),
         TestFile("test_nightly_vlms_perf.py", 60),
