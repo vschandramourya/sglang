@@ -180,7 +180,7 @@ def alloc_extend_kernel(
     out_indices,
     bs_upper: tl.constexpr,
     page_size: tl.constexpr,
-    max_num_extend_tokens: tl.constexpr,
+    max_num_extend_tokens,
 ):
     pid = tl.program_id(0)
 
@@ -226,16 +226,27 @@ def alloc_extend_kernel(
         - (pre_len + page_size - 1) // page_size * page_size
     )
 
-    offset_many_page = tl.arange(0, max_num_extend_tokens)
-    page_start = tl.load(
-        free_page_ptr + new_page_start_loc + offset_many_page // page_size,
-        mask=offset_many_page < num_part2,
-    )
-    tl.store(
-        out_indices + output_start_loc + num_part1 + offset_many_page,
-        page_start * page_size + offset_many_page % page_size,
-        mask=offset_many_page < num_part2,
-    )
+    # Process in chunks using fixed chunk size to avoid large arrays
+    CHUNK_SIZE: tl.constexpr = 8192  # Fixed chunk size
+    num_chunks = tl.cdiv(max_num_extend_tokens, CHUNK_SIZE)
+    
+    for chunk_idx in range(num_chunks):
+        chunk_start = chunk_idx * CHUNK_SIZE
+        chunk_end = tl.minimum(chunk_start + CHUNK_SIZE, max_num_extend_tokens)
+        
+        offset_chunk = tl.arange(0, CHUNK_SIZE) + chunk_start
+        mask_chunk = offset_chunk < num_part2
+        
+        page_start = tl.load(
+            free_page_ptr + new_page_start_loc + offset_chunk // page_size,
+            mask=mask_chunk,
+        )
+        tl.store(
+            out_indices + output_start_loc + num_part1 + offset_chunk,
+            page_start * page_size + offset_chunk % page_size,
+            mask=mask_chunk,
+        )
+    
     if pre_len + num_part1 + num_part2 == seq_len:
         return
 
@@ -371,7 +382,7 @@ class PagedTokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
             out_indices,
             next_power_of_2(bs),
             self.page_size,
-            self.seen_max_num_extend_tokens_next_power_of_2,
+            self.seen_max_num_extend_tokens_next_power_of_2,  # Now passed as runtime value, not constexpr
         )
 
         if self.debug_mode:
