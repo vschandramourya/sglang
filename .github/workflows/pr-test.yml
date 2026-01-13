@@ -57,28 +57,6 @@ jobs:
           cd test/tgl
           python3 run_suite.py --suite per-commit-1-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
 
-  unit-test-backend-2-gpu:
-    needs: [check-changes]
-    if: always() && !failure() && !cancelled()
-    runs-on: 2-gpu-runner
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [0, 1]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          bash scripts/ci/ci_install_dependency.sh
-
-      - name: Run test
-        timeout-minutes: 60
-        run: |
-          cd test/tgl
-          python3 run_suite.py --suite per-commit-2-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
-
   performance-test-1-gpu-part-1:
     needs: [check-changes]
     if: always() && !failure() && !cancelled()
@@ -172,7 +150,7 @@ jobs:
           python3 -m unittest test_bench_serving.TestBenchServing.test_vlm_online_latency
 
   performance-test-2-gpu:
-    needs: [check-changes, unit-test-backend-2-gpu]
+    needs: [check-changes]
     if: always() && !failure() && !cancelled()
     runs-on: 2-gpu-runner
     steps:
@@ -327,11 +305,32 @@ jobs:
           cd test/tgl
           IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor-phoenix --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
 
+  unit-test-backend-8-gpu-h200-tgl:
+    needs: [check-changes]
+    if: always() && !failure() && !cancelled()
+    runs-on: h200-8gpu-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run test
+        timeout-minutes: 60
+        run: |
+          cd test/tgl
+          python3 run_suite.py --suite per-commit-8-gpu-h200-tgl --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+
   pr-test-finish:
     needs: [
       check-changes,
       unit-test-backend-1-gpu,
-      unit-test-backend-2-gpu,
       performance-test-1-gpu-part-1,
       performance-test-1-gpu-part-2,
       performance-test-2-gpu,
@@ -339,7 +338,7 @@ jobs:
       accuracy-test-2-gpu,
       unit-test-backend-4-gpu-b200,
       unit-test-backend-4-gpu-b200-cursor,
-      unit-test-backend-4-gpu-b200-cursor-phoenix
+      unit-test-backend-8-gpu-h200-tgl
     ]
     if: always()
     runs-on: ubuntu-latest

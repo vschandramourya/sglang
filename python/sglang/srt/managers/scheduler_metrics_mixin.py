@@ -137,7 +137,7 @@ class SchedulerMetricsMixin:
         self.last_input_throughput = self.last_prefill_tokens / gap_latency
         self.last_prefill_tokens = adder.log_input_tokens
 
-        # assert self.temp_prefill_info is None # TODO re-enable
+        assert self.temp_prefill_info is None
         self.temp_prefill_info = dict(
             adder_log_input_tokens=adder.log_input_tokens,
             adder_log_hit_tokens=adder.log_hit_tokens,
@@ -497,13 +497,13 @@ class SchedulerMetricsMixin:
                 for batch in self.running_mbs:
                     if batch and hasattr(batch, "reqs"):
                         for req in batch.reqs:
-                            if hasattr(req, "lora_id"):
+                            if hasattr(req, "lora_id") and req.lora_id is not None:
                                 active_lora_ids.add(req.lora_id)
             # For normal mode, check running_batch
             elif hasattr(self, "running_batch") and self.running_batch:
                 if hasattr(self.running_batch, "reqs"):
                     for req in self.running_batch.reqs:
-                        if hasattr(req, "lora_id"):
+                        if hasattr(req, "lora_id") and req.lora_id is not None:
                             active_lora_ids.add(req.lora_id)
 
             # Count active adapters (excluding None for base model)

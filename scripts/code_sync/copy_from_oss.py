@@ -63,6 +63,7 @@ FOLDER_NAMES = [
     "python/sglang/compile_deep_gemm.py",
     "python/sglang/global_config.py",
     "python/sglang/profiler.py",
+    ".pre-commit-config.yaml",
 ]
 
 folder_names_for_sgl_router = [

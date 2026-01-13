@@ -183,8 +183,8 @@ class TestDeepseekV3FP4MTPFP8Attn(CustomTestCase):
                 f'{metrics["accuracy"]=:.3f}\n'
                 f"{avg_spec_accept_length=:.2f}\n"
             )
-            self.assertGreater(metrics["accuracy"], 0.94)
-            self.assertGreater(avg_spec_accept_length, 2.04)
+        self.assertGreater(metrics["accuracy"], 0.94)
+        self.assertGreater(avg_spec_accept_length, 2.04)
 
     def test_bs_1_speed(self):
         args = BenchArgs(port=int(self.base_url.split(":")[-1]), max_new_tokens=2048)
@@ -198,8 +198,8 @@ class TestDeepseekV3FP4MTPFP8Attn(CustomTestCase):
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
-            self.assertGreater(acc_length, 2.97)
-            self.assertGreater(speed, 292.17)
+        self.assertGreater(acc_length, 2.97)
+        self.assertGreater(speed, 292.17)
 
 
 class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
@@ -276,8 +276,8 @@ class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
                 f'{metrics["accuracy"]=:.3f}\n'
                 f"{avg_spec_accept_length=:.2f}\n"
             )
-            self.assertGreater(metrics["accuracy"], 0.94)
-            self.assertGreater(avg_spec_accept_length, 2.04)
+        self.assertGreater(metrics["accuracy"], 0.94)
+        self.assertGreater(avg_spec_accept_length, 2.04)
 
     def test_bs_1_speed(self):
         args = BenchArgs(port=int(self.base_url.split(":")[-1]), max_new_tokens=2048)
@@ -291,8 +291,8 @@ class TestDeepseekV3FP4MTPHybrid(CustomTestCase):
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
-            self.assertGreater(acc_length, 2.93)
-            self.assertGreater(speed, 290.09)
+        self.assertGreater(acc_length, 2.93)
+        self.assertGreater(speed, 290.09)
 
 
 class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
@@ -369,8 +369,8 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
                 f'{metrics["accuracy"]=:.3f}\n'
                 f"{avg_spec_accept_length=:.2f}\n"
             )
-            self.assertGreater(metrics["accuracy"], 0.94)
-            self.assertGreater(avg_spec_accept_length, 2.04)
+        self.assertGreater(metrics["accuracy"], 0.94)
+        self.assertGreater(avg_spec_accept_length, 2.04)
 
     def test_bs_1_speed(self):
         args = BenchArgs(port=int(self.base_url.split(":")[-1]), max_new_tokens=2048)
@@ -384,8 +384,8 @@ class TestDeepseekV3FP4WithFP8KVCache(CustomTestCase):
                 f"{acc_length=:.2f}\n"
                 f"{speed=:.2f} token/s\n"
             )
-            self.assertGreater(acc_length, 2.93)
-            self.assertGreater(speed, 243.60)
+        self.assertGreater(acc_length, 2.93)
+        self.assertGreater(speed, 243.60)
 
 
 if __name__ == "__main__":
