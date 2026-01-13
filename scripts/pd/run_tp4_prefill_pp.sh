@@ -16,11 +16,9 @@ python3 -m sglang.launch_server \
   --model-path /data/dsv31-agent-1003-bt-rl-1026-mtp-2-force-thinkFP4/ \
   --trust-remote-code \
   --quantization modelopt_fp4 \
-  --fp4-gemm-backend sglang \
-  --tp 8 \
+  --tp 4 \
   --attention-backend trtllm_mla \
   --moe-runner-backend flashinfer_trtllm \
-  --speculative-algorithm EAGLE \
   --speculative-num-steps 3 \
   --speculative-eagle-topk 1 \
   --speculative-num-draft-tokens 4 \
@@ -33,8 +31,8 @@ python3 -m sglang.launch_server \
   --kv-cache-dtype fp8_e4m3 \
   --page-size 64 \
   --max-running-requests 32 \
-  --chunked-prefill-size 98304 \
-  --max-prefill-tokens 98304 \
+  --chunked-prefill-size 16384 \
+  --max-prefill-tokens 16384 \
   --mem-fraction-static 0.75 \
   --log-requests \
   --log-requests-level 0 \

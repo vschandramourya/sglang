@@ -19,7 +19,7 @@ done
 export HOST
 export MODEL="cursor/dsv31-gb200-tgl-test-02"
 export PROMPT="$(cat <<'EOF'
-You are a highly knowledgeable travel expert and city historian with deep familiarity with New York City across culture, history, food, architecture, arts, transportation, and neighborhoods.
+Hi, You are a highly knowledgeable travel expert and city historian with deep familiarity with New York City across culture, history, food, architecture, arts, transportation, and neighborhoods.
 Your task is to answer questions about New York City with clarity, depth, and structured reasoning.
 
 Before answering, carefully consider the following background context and constraints. This context is intentionally long and should be treated as important reference material.
