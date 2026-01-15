@@ -161,8 +161,11 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
 
         aux_hidden_states = None
         if disable_normed_states:
-            hidden_states, residual = hidden_states
-            aux_hidden_states = [residual]
+            if isinstance(hidden_states, tuple):
+                hidden_states, residual = hidden_states
+                aux_hidden_states = [residual]
+            else:
+                aux_hidden_states = None
 
         if self.pp_group.is_last_rank:
             return self.logits_processor(
