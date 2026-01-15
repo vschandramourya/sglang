@@ -49,7 +49,7 @@ EOF
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-NUM_REQUESTS=20
+NUM_REQUESTS=10
 python3 - "$TMPDIR" "$NUM_REQUESTS" <<'PY'
 import json, os, sys
 
@@ -57,7 +57,7 @@ tmpdir = sys.argv[1]
 num_requests = int(sys.argv[2])
 
 base_context = os.environ["BASE_CONTEXT"]
-target_tokens = 100 * 1024
+target_tokens = 60 * 1024
 chars_per_token = 4
 target_chars = target_tokens * chars_per_token
 
@@ -65,8 +65,7 @@ repetitions = (target_chars // len(base_context)) + 1
 expanded_context = (base_context + "\n") * repetitions
 expanded_context = expanded_context[:target_chars]
 
-for i in range(1, num_requests + 1):
-    prompt = f"""[REQUEST_ID_{i}] Hi, You are a highly knowledgeable travel expert and city historian with deep familiarity with New York City across culture, history, food, architecture, arts, transportation, and neighborhoods.
+system_prompt = f"""You are a highly knowledgeable travel expert and city historian with deep familiarity with New York City across culture, history, food, architecture, arts, transportation, and neighborhoods.
 Your task is to answer questions about New York City with clarity, depth, and structured reasoning.
 
 Before answering, carefully consider the following background context and constraints. This context is intentionally long and should be treated as important reference material.
@@ -76,27 +75,58 @@ Before answering, carefully consider the following background context and constr
 Tone requirements:
 - Clear and confident
 - Informative but concise
-- Structured with numbered lists when appropriate
+- Structured with numbered lists when appropriate"""
 
-Now answer the following question:
+user_question_cores = [
+    "What are the top 3 things to do in New York City for a first-time visitor? List exactly three items with a short title and 2-3 sentence explanation each.",
+    "What are the best museums to visit in Manhattan? List exactly three items with a short title and 2-3 sentence explanation each.",
+    "Where can I find the best pizza in New York City? List exactly three neighborhoods with a short title and 2-3 sentence explanation each.",
+    "What are the most scenic walking routes in New York City? List exactly three routes with a short title and 2-3 sentence explanation each.",
+    "What are the best free activities in New York City? List exactly three items with a short title and 2-3 sentence explanation each.",
+    "What neighborhoods should I explore in Brooklyn? List exactly three neighborhoods with a short title and 2-3 sentence explanation each.",
+    "What are the best viewpoints to see the NYC skyline? List exactly three locations with a short title and 2-3 sentence explanation each.",
+    "What Broadway shows should a first-timer see? List exactly three recommendations with a short title and 2-3 sentence explanation each.",
+    "What are the best parks in New York City besides Central Park? List exactly three parks with a short title and 2-3 sentence explanation each.",
+    "What historical landmarks should I visit in NYC? List exactly three landmarks with a short title and 2-3 sentence explanation each.",
+]
 
-What are the top 3 things to do in New York City for a first-time visitor?
+user_target_tokens = 5 * 1024
+user_target_chars = user_target_tokens * chars_per_token
 
-In your answer:
-- List exactly three items
-- For each item, give a short title and a 2–3 sentence explanation
-- Focus on experiences rather than specific businesses unless unavoidable
-- Assume the reader has limited time but wants a classic New York experience"""
+user_questions = []
+for i, q in enumerate(user_question_cores):
+    padding_base = f"[Context block {i+1}] " + base_context
+    padding_reps = (user_target_chars // len(padding_base)) + 1
+    padding = (padding_base + "\n") * padding_reps
+    padding = padding[:user_target_chars - len(q) - 50]
+    user_questions.append(f"{padding}\n\nNow answer this question:\n{q}")
 
+initial_payload = {
+    "model": os.environ["MODEL"],
+    "messages": [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Hello, I'm ready to ask you questions about New York City."},
+    ],
+    "stream": True,
+    "stream_options": {"include_usage": True},
+    "temperature": 0.0,
+    "max_tokens": 1,
+}
+with open(f"{tmpdir}/request_0.json", 'w') as f:
+    json.dump(initial_payload, f)
+
+for i in range(1, num_requests + 1):
     payload = {
-      "model": os.environ["MODEL"],
-      "messages": [{"role": "user", "content": prompt}],
-      "stream": True,
-      "stream_options": {"include_usage": True},
-      "temperature": 0.0,
-      "max_tokens": 1,
+        "model": os.environ["MODEL"],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_questions[i - 1]},
+        ],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "temperature": 0.0,
+        "max_tokens": 1,
     }
-
     with open(f"{tmpdir}/request_{i}.json", 'w') as f:
         json.dump(payload, f)
 PY
@@ -128,6 +158,11 @@ except: pass
   echo "[Request $id] completed in ${duration}s"
 }
 
+echo "=== Sending initial request to populate KV cache ==="
+send_request 0
+echo ""
+
+echo "=== Sending $NUM_REQUESTS follow-up requests with different user messages ==="
 for i in $(seq 1 $NUM_REQUESTS); do
   send_request $i &
 done
@@ -142,6 +177,13 @@ import sys, os
 tmpdir = sys.argv[1]
 num_requests = int(sys.argv[2])
 
+initial_time_file = f"{tmpdir}/time_0.txt"
+if os.path.exists(initial_time_file):
+    with open(initial_time_file) as f:
+        initial_time = float(f.read().strip())
+    print(f"Initial request (KV cache population): {initial_time:.3f}s")
+    print("")
+
 times = []
 for i in range(1, num_requests + 1):
     time_file = f"{tmpdir}/time_{i}.txt"
@@ -151,7 +193,7 @@ for i in range(1, num_requests + 1):
 
 if times:
     avg = sum(times) / len(times)
-    print(f"Requests completed: {len(times)}/{num_requests}")
+    print(f"Follow-up requests completed: {len(times)}/{num_requests}")
     print(f"Min time: {min(times):.3f}s")
     print(f"Max time: {max(times):.3f}s")
     print(f"Average time: {avg:.3f}s")

@@ -49,7 +49,7 @@ EOF
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-NUM_REQUESTS=20
+NUM_REQUESTS=1
 python3 - "$TMPDIR" "$NUM_REQUESTS" <<'PY'
 import json, os, sys
 
@@ -57,7 +57,7 @@ tmpdir = sys.argv[1]
 num_requests = int(sys.argv[2])
 
 base_context = os.environ["BASE_CONTEXT"]
-target_tokens = 100 * 1024
+target_tokens = 280 * 1024
 chars_per_token = 4
 target_chars = target_tokens * chars_per_token
 
