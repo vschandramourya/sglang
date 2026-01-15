@@ -162,6 +162,7 @@ from sglang.srt.managers.utils import GenerationBatchResult, validate_input_leng
 from sglang.srt.mem_cache.cache_init_params import CacheInitParams
 from sglang.srt.mem_cache.common import release_kv_cache
 from sglang.srt.mem_cache.radix_cache import RadixCache
+from sglang.srt.mem_cache.utils import convert_to_bigram_key
 from sglang.srt.model_executor.forward_batch_info import ForwardMode, PPProxyTensors
 from sglang.srt.multiplex.multiplexing_mixin import SchedulerMultiplexMixin
 from sglang.srt.parser.reasoning_parser import ReasoningParser
@@ -1555,13 +1556,56 @@ class Scheduler(
     def _prefetch_kvcache(self, req: Req):
         if self.enable_hicache_storage:
             req.init_next_round_input(self.tree_cache)
-            if req.last_node.backuped:
-                # only to initiate the prefetch if the last node is backuped
-                # otherwise, the allocated GPU memory must be locked for integrity
+            
+            # Get matched length from local cache
+            matched_len = len(req.prefix_indices) + req.host_hit_length
+            new_input_tokens = req.fill_ids[matched_len:]
+            
+            # Debug: log entry and key variables
+            logger.info(
+                f"[_prefetch_kvcache] rid={req.rid}, matched_len={matched_len}, "
+                f"new_input_len={len(new_input_tokens)}, last_node_backuped={req.last_node.backuped}, "
+                f"is_eagle={self.tree_cache.is_eagle}"
+            )
+            
+            # L3-first query takes priority when local cache is empty (matched_len=0)
+            # This is because root_node.backuped is always True, so we need to check matched_len first
+            if matched_len == 0 and len(new_input_tokens) > 0:
+                # L3-first query: local cache is empty, try to fetch from L3 storage
+                # This enables cross-worker L3 cache sharing
+                logger.info(f"[_prefetch_kvcache] Taking L3-FIRST path (matched_len=0)")
+                
+                # Convert to bigram keys for EAGLE mode (must match cache insert format)
+                if self.tree_cache.is_eagle:
+                    tokens_for_l3 = convert_to_bigram_key(new_input_tokens)
+                    logger.info(
+                        f"[_prefetch_kvcache] EAGLE bigram conversion: "
+                        f"input_len={len(new_input_tokens)}, output_len={len(tokens_for_l3)}"
+                    )
+                else:
+                    tokens_for_l3 = new_input_tokens
+                
+                # Debug: log first few tokens for hash comparison
+                page_size = self.tree_cache.page_size
+                first_page_tokens = tokens_for_l3[:page_size] if len(tokens_for_l3) >= page_size else tokens_for_l3
+                logger.info(
+                    f"[L3-First] Request {req.rid}: local cache empty, "
+                    f"tokens={len(tokens_for_l3)}, is_eagle={self.tree_cache.is_eagle}, "
+                    f"first_page_tokens={first_page_tokens[:10]}..."
+                )
+                
+                # Start from root node with no prior hash
+                self.tree_cache.prefetch_from_storage(
+                    req.rid,
+                    self.tree_cache.root_node,  # Use root node as anchor
+                    tokens_for_l3,
+                    last_hash=None,  # No prior hash when starting from root
+                    prefix_keys=None,  # No prefix keys when starting from root
+                )
+            elif req.last_node.backuped:
+                # Standard path: last node is backuped, use its hash for prefetch
+                logger.info(f"[_prefetch_kvcache] Taking STANDARD path (last_node.backuped=True)")
                 last_hash = req.last_host_node.get_last_hash_value()
-                matched_len = len(req.prefix_indices) + req.host_hit_length
-                new_input_tokens = req.fill_ids[matched_len:]
-
                 prefix_keys = (
                     req.last_node.get_prefix_hash_values(req.last_node.parent)
                     if self.tree_cache.hicache_storage_pass_prefix_keys
@@ -1573,6 +1617,11 @@ class Scheduler(
                     new_input_tokens,
                     last_hash,
                     prefix_keys,
+                )
+            else:
+                logger.info(
+                    f"[_prefetch_kvcache] NO prefetch: matched_len={matched_len}, "
+                    f"new_input_len={len(new_input_tokens)}"
                 )
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
