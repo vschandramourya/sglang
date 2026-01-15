@@ -1,0 +1,50 @@
+x-pd-common: &pd-common
+  image: ${PD_IMAGE:-598726163780.dkr.ecr.us-west-2.amazonaws.com/tgl:vmain-20251210-40fdfc862}
+  ipc: host
+  network_mode: host
+  pid: host
+  privileged: true
+  tty: true
+  gpus: all
+  ulimits:
+    memlock: -1
+  environment:
+    HF_HUB_CACHE: /data/huggingface
+    PD_SCRIPTS_DIR: ${PD_SCRIPTS_DIR}
+    # Allow empty token without noisy compose warnings
+    HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
+  volumes:
+    - /home:/home
+    - /scratch:/scratch
+    - /data:/data
+    - /etc/nccl.conf.example:/etc/nccl.conf:ro
+  entrypoint: ["/bin/bash"]
+  command:
+    - -lc
+    - |
+      set -euo pipefail
+      cp "${PD_SCRIPTS_DIR}/container_setup.sh" /usr/local/bin/container_setup.sh
+      chmod +x /usr/local/bin/container_setup.sh
+      /usr/local/bin/container_setup.sh
+      exec sleep infinity
+
+x-eval-common: &eval-common
+  <<: *pd-common
+  image: 598726163780.dkr.ecr.us-west-2.amazonaws.com/tore-eval:25.06.26
+
+services:
+  prefill:
+    <<: *pd-common
+    container_name: "${USER_NAME}-prefill"
+
+  decode:
+    <<: *pd-common
+    container_name: "${USER_NAME}-decode"
+
+  router:
+    <<: *pd-common
+    container_name: "${USER_NAME}-router"
+  
+  eval:
+    <<: *eval-common
+    container_name: "${USER_NAME}-eval"
