@@ -1585,20 +1585,15 @@ class Scheduler(
                 # Convert to bigram keys for EAGLE mode (must match cache insert format)
                 if self.tree_cache.is_eagle:
                     tokens_for_l3 = convert_to_bigram_key(new_input_tokens)
-                    logger.info(
-                        f"[_prefetch_kvcache] EAGLE bigram conversion: "
-                        f"input_len={len(new_input_tokens)}, output_len={len(tokens_for_l3)}"
-                    )
+                    logger.info(f"[_prefetch_kvcache] EAGLE bigram conversion: input_len={len(new_input_tokens)}, output_len={len(tokens_for_l3)}")
                 else:
                     tokens_for_l3 = new_input_tokens
                 
-                # Debug: log first few tokens for hash comparison
-                page_size = self.tree_cache.page_size
-                first_page_tokens = tokens_for_l3[:page_size] if len(tokens_for_l3) >= page_size else tokens_for_l3
+                # Debug: log L3-First query details
+                first_page_tokens = list(zip(tokens_for_l3[:10], tokens_for_l3[1:11])) if len(tokens_for_l3) > 1 else []
                 logger.info(
-                    f"[L3-First] Request {req.rid}: local cache empty, "
-                    f"tokens={len(tokens_for_l3)}, is_eagle={self.tree_cache.is_eagle}, "
-                    f"first_page_tokens={first_page_tokens[:10]}..."
+                    f"[L3-First] Request {req.rid}: local cache empty, tokens={len(tokens_for_l3)}, "
+                    f"is_eagle={self.tree_cache.is_eagle}, first_page_tokens={first_page_tokens}..."
                 )
                 
                 # Start from root node with no prior hash
@@ -1610,8 +1605,6 @@ class Scheduler(
                     prefix_keys=None,  # No prefix keys when starting from root
                 )
             elif req.last_node.backuped:
-                # Standard path: last node is backuped, use its hash for prefetch
-                logger.info(f"[_prefetch_kvcache] Taking STANDARD path (last_node.backuped=True)")
                 last_hash = req.last_host_node.get_last_hash_value()
                 prefix_keys = (
                     req.last_node.get_prefix_hash_values(req.last_node.parent)

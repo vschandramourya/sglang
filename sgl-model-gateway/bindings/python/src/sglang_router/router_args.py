@@ -23,16 +23,15 @@ class RouterArgs:
         default_factory=list
     )  # List of (url, bootstrap_port)
     decode_urls: List[str] = dataclasses.field(default_factory=list)
-    # Pre-prefill configuration for cold sessions
-    pre_prefill_url: Optional[str] = None  # URL for cold session prefill
-    pre_prefill_decode_url: Optional[str] = None  # Optional paired decode URL
-    pre_prefill_match_threshold: float = 0.1  # 10% - cache match ratio <= this => cold
-    pre_prefill_unmatched_chars_threshold: int = 10000  # unmatched chars >= this => cold
 
     # Routing policy
     policy: str = "cache_aware"
     prefill_policy: Optional[str] = None  # Specific policy for prefill nodes in PD mode
     decode_policy: Optional[str] = None  # Specific policy for decode nodes in PD mode
+    pre_prefill_url: Optional[str] = None  # URL for cold session prefill
+    pre_prefill_decode_url: Optional[str] = None  # Optional paired decode URL
+    pre_prefill_match_threshold: float = 0.1  # 10% - cache match ratio <= this => cold
+    pre_prefill_unmatched_chars_threshold: int = 10000  # unmatched chars >= this => cold
     worker_startup_timeout_secs: int = 1800
     worker_startup_check_interval: int = 30
     cache_threshold: float = 0.3
@@ -276,6 +275,30 @@ class RouterArgs:
             help="Specific policy for decode nodes in PD mode. If not specified, uses the main policy",
         )
         routing_group.add_argument(
+            f"--{prefix}pre-prefill-url",
+            type=str,
+            default=None,
+            help="PD only: URL for cold session (low cache match) prefill worker",
+        )
+        routing_group.add_argument(
+            f"--{prefix}pre-prefill-decode-url",
+            type=str,
+            default=None,
+            help="PD only: optional decode worker URL paired with --pre-prefill-url. If not set, decode uses shared pool",
+        )
+        routing_group.add_argument(
+            f"--{prefix}pre-prefill-match-threshold",
+            type=float,
+            default=RouterArgs.pre_prefill_match_threshold,
+            help="PD only: if cache match ratio <= this threshold (0.0-1.0), route to pre-prefill. Default 0.1 (10%%)",
+        )
+        routing_group.add_argument(
+            f"--{prefix}pre-prefill-unmatched-chars-threshold",
+            type=int,
+            default=RouterArgs.pre_prefill_unmatched_chars_threshold,
+            help="PD only: if unmatched chars >= this threshold, route to pre-prefill. Default 10000",
+        )
+        routing_group.add_argument(
             f"--{prefix}cache-threshold",
             type=float,
             default=RouterArgs.cache_threshold,
@@ -366,31 +389,6 @@ class RouterArgs:
             action="append",
             metavar=("URL",),
             help="Decode server URL. Can be specified multiple times.",
-        )
-        # Pre-prefill configuration for cold sessions
-        parser.add_argument(
-            f"--{prefix}pre-prefill-url",
-            type=str,
-            default=None,
-            help="PD only: route cold requests (low cache match ratio or high unmatched chars) to this prefill worker URL",
-        )
-        parser.add_argument(
-            f"--{prefix}pre-prefill-decode-url",
-            type=str,
-            default=None,
-            help="PD only: optional decode worker URL paired with --pre-prefill-url. If not set, decode uses shared pool",
-        )
-        parser.add_argument(
-            f"--{prefix}pre-prefill-match-threshold",
-            type=float,
-            default=RouterArgs.pre_prefill_match_threshold,
-            help="PD only: if cache match ratio <= this threshold (0.0-1.0), route to pre-prefill. Default 0.1 (10%%)",
-        )
-        parser.add_argument(
-            f"--{prefix}pre-prefill-unmatched-chars-threshold",
-            type=int,
-            default=RouterArgs.pre_prefill_unmatched_chars_threshold,
-            help="PD only: if unmatched chars >= this threshold, route to pre-prefill. Default 10000",
         )
         pd_group.add_argument(
             f"--{prefix}worker-startup-timeout-secs",

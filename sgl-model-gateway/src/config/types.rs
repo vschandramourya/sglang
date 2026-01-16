@@ -848,8 +848,8 @@ mod tests {
             decode_policy: None,
             pre_prefill_url: None,
             pre_prefill_decode_url: None,
-            pre_prefill_match_threshold: 0.1,
-            pre_prefill_unmatched_chars_threshold: 10000,
+            pre_prefill_match_threshold: default_pre_prefill_match_threshold(),
+            pre_prefill_unmatched_chars_threshold: default_pre_prefill_unmatched_chars_threshold(),
         };
         assert!(pd.is_pd_mode());
     }
@@ -879,8 +879,8 @@ mod tests {
             decode_policy: None,
             pre_prefill_url: None,
             pre_prefill_decode_url: None,
-            pre_prefill_match_threshold: 0.1,
-            pre_prefill_unmatched_chars_threshold: 10000,
+            pre_prefill_match_threshold: default_pre_prefill_match_threshold(),
+            pre_prefill_unmatched_chars_threshold: default_pre_prefill_unmatched_chars_threshold(),
         };
         assert_eq!(pd.worker_count(), 5);
 
@@ -906,8 +906,8 @@ mod tests {
             decode_policy: None,
             pre_prefill_url: None,
             pre_prefill_decode_url: None,
-            pre_prefill_match_threshold: 0.1,
-            pre_prefill_unmatched_chars_threshold: 10000,
+            pre_prefill_match_threshold: default_pre_prefill_match_threshold(),
+            pre_prefill_unmatched_chars_threshold: default_pre_prefill_unmatched_chars_threshold(),
         };
         let json = serde_json::to_string(&pd).unwrap();
         assert!(json.contains("\"type\":\"prefill_decode\""));
@@ -1377,8 +1377,8 @@ mod tests {
             }),
             pre_prefill_url: None,
             pre_prefill_decode_url: None,
-            pre_prefill_match_threshold: 0.1,
-            pre_prefill_unmatched_chars_threshold: 10000,
+            pre_prefill_match_threshold: default_pre_prefill_match_threshold(),
+            pre_prefill_unmatched_chars_threshold: default_pre_prefill_unmatched_chars_threshold(),
         };
 
         let main_policy = PolicyConfig::Random;
@@ -1409,8 +1409,8 @@ mod tests {
             decode_policy: None,
             pre_prefill_url: None,
             pre_prefill_decode_url: None,
-            pre_prefill_match_threshold: 0.1,
-            pre_prefill_unmatched_chars_threshold: 10000,
+            pre_prefill_match_threshold: default_pre_prefill_match_threshold(),
+            pre_prefill_unmatched_chars_threshold: default_pre_prefill_unmatched_chars_threshold(),
         };
 
         let main_policy = PolicyConfig::RoundRobin;
@@ -1437,8 +1437,8 @@ mod tests {
             }),
             pre_prefill_url: None,
             pre_prefill_decode_url: None,
-            pre_prefill_match_threshold: 0.1,
-            pre_prefill_unmatched_chars_threshold: 10000,
+            pre_prefill_match_threshold: default_pre_prefill_match_threshold(),
+            pre_prefill_unmatched_chars_threshold: default_pre_prefill_unmatched_chars_threshold(),
         };
 
         let main_policy = PolicyConfig::Random;
@@ -1463,8 +1463,8 @@ mod tests {
             decode_policy: None,
             pre_prefill_url: None,
             pre_prefill_decode_url: None,
-            pre_prefill_match_threshold: 0.1,
-            pre_prefill_unmatched_chars_threshold: 10000,
+            pre_prefill_match_threshold: default_pre_prefill_match_threshold(),
+            pre_prefill_unmatched_chars_threshold: default_pre_prefill_unmatched_chars_threshold(),
         };
 
         let main_policy = PolicyConfig::CacheAware {

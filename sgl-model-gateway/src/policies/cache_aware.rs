@@ -284,6 +284,69 @@ impl CacheAwarePolicy {
         }
     }
 
+    /// Estimate cache match statistics for pre-prefill routing.
+    /// Returns (matched_chars, total_chars) if a match is found.
+    /// This is used to determine if a request is "cold" (low match) or "warm" (high match).
+    pub fn estimate_match_stats(
+        &self,
+        workers: &[Arc<dyn Worker>],
+        text: &str,
+    ) -> Option<(usize, usize)> {
+        if workers.is_empty() || text.is_empty() {
+            return Some((0, text.chars().count()));
+        }
+
+        // Get model_id from first worker
+        let model_id = normalize_model_key(workers[0].model_id());
+
+        // Get tree for this model
+        let tree = self.trees.get(model_id).map(|entry| entry.value().clone())?;
+
+        // Get prefix match result
+        let result = tree.prefix_match_with_counts(text);
+
+        Some((result.matched_char_count, result.input_char_count))
+    }
+
+    /// Record a worker assignment in the cache tree.
+    /// This is used by pre-prefill routing to update the cache state
+    /// even when it overrides the normal policy selection.
+    pub fn record_assignment(
+        &self,
+        workers: &[Arc<dyn Worker>],
+        text: &str,
+        worker_url: &str,
+    ) {
+        if workers.is_empty() || text.is_empty() {
+            return;
+        }
+
+        // Get model_id from first worker
+        let model_id = normalize_model_key(workers[0].model_id());
+
+        // Get or create tree for this model
+        let tree = self
+            .trees
+            .entry(model_id.to_string())
+            .or_insert_with(|| Arc::new(Tree::new()));
+
+        // Insert the text -> worker mapping
+        tree.insert(text, worker_url);
+
+        // Sync to mesh if enabled
+        if let Some(ref mesh_sync) = self.mesh_sync {
+            use crate::mesh::tree_ops::TreeInsertOp;
+            let op = TreeOperation::Insert(TreeInsertOp {
+                text: text.to_string(),
+                tenant: worker_url.to_string(),
+            });
+            let mesh_model_id = Self::normalize_mesh_model_id(model_id);
+            if let Err(e) = mesh_sync.sync_tree_operation(mesh_model_id.to_string(), op) {
+                warn!("Failed to sync tree insert operation to mesh: {}", e);
+            }
+        }
+    }
+
     fn select_worker_min_load(
         &self,
         workers: &[Arc<dyn Worker>],

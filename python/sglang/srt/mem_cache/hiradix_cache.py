@@ -258,7 +258,7 @@ class HiRadixCache(RadixCache):
             if not write_back:
                 # no need to lock nodes if write back
                 self.inc_lock_ref(node)
-            logger.info(
+            logger.debug(
                 f"[HiRadixCache] write_backup SUCCESS: node_id={node.id}, host_indices_len={len(host_indices)}"
             )
         else:
@@ -268,11 +268,6 @@ class HiRadixCache(RadixCache):
         return len(host_indices)
 
     def write_backup_storage(self, node: TreeNode):
-        logger.info(
-            f"[HiRadixCache] write_backup_storage START: node_id={node.id}, "
-            f"hash_value_count={len(node.hash_value) if node.hash_value else 0}, "
-            f"first_hashes={node.hash_value[:2] if node.hash_value else None}"
-        )
         prefix_keys = (
             node.get_prefix_hash_values(node.parent)
             if self.hicache_storage_pass_prefix_keys
@@ -284,42 +279,19 @@ class HiRadixCache(RadixCache):
         )
         self.ongoing_backup[operation_id] = node
         node.protect_host()
-        logger.info(
-            f"[HiRadixCache] write_backup_storage QUEUED: node_id={node.id}, operation_id={operation_id}"
-        )
 
     def _inc_hit_count(self, node: TreeNode, chunked=False):
         # skip the hit count update for chunked requests
         if self.cache_controller.write_policy == "write_back" or chunked:
-            logger.debug(
-                f"[HiRadixCache] _inc_hit_count SKIPPED: write_policy={self.cache_controller.write_policy}, chunked={chunked}"
-            )
             return
         node.hit_count += 1
-        logger.debug(
-            f"[HiRadixCache] _inc_hit_count: node_id={node.id}, hit_count={node.hit_count}, "
-            f"backuped={node.backuped}, threshold={self.write_through_threshold}"
-        )
 
         if not node.backuped:
             if node.hit_count >= self.write_through_threshold:
-                logger.info(
-                    f"[HiRadixCache] WRITE_THROUGH TRIGGERED: node_id={node.id}, "
-                    f"hit_count={node.hit_count} >= threshold={self.write_through_threshold}"
-                )
                 # write to host if the node is not backuped
                 self.write_backup(node)
 
     def writing_check(self, write_back=False):
-        # Debug: log entry state
-        ongoing_count = len(self.ongoing_write_through)
-        ack_queue_len = len(self.cache_controller.ack_write_queue)
-        if ongoing_count > 0 or ack_queue_len > 0:
-            logger.debug(
-                f"[HiRadixCache] writing_check ENTER: ongoing_write_through={ongoing_count}, "
-                f"ack_write_queue_len={ack_queue_len}, write_back={write_back}, enable_storage={self.enable_storage}"
-            )
-        
         if write_back:
             # blocking till all write back complete
             while len(self.ongoing_write_through) > 0:
@@ -350,9 +322,6 @@ class HiRadixCache(RadixCache):
             )
 
         finish_count = int(queue_size.item())
-        logger.debug(
-            f"[HiRadixCache] writing_check: finish_count={finish_count}, enable_storage={self.enable_storage}"
-        )
         while finish_count > 0:
             _, finish_event, ack_list = self.cache_controller.ack_write_queue.pop(0)
             finish_event.synchronize()
@@ -360,10 +329,6 @@ class HiRadixCache(RadixCache):
                 backuped_node = self.ongoing_write_through.pop(ack_id)
                 self.dec_lock_ref(backuped_node)
                 if self.enable_storage:
-                    logger.info(
-                        f"[HiRadixCache] writing_check: GPU->Host done for node_id={ack_id}, "
-                        f"now triggering Host->L3 storage write"
-                    )
                     self.write_backup_storage(backuped_node)
             finish_count -= 1
 
@@ -734,14 +699,6 @@ class HiRadixCache(RadixCache):
                 min_completed_tokens - matched_length
             )
 
-        if is_l3_first:
-            logger.info(
-                f"[L3-First] Prefetch completed for {req_id}: "
-                f"fetched_tokens={min_completed_tokens}, "
-                f"pages={len(hash_value)}, "
-                f"new_tree_nodes={min_completed_tokens - matched_length}"
-            )
-
         return True
 
     def match_prefix(self, key: RadixKey, **kwargs):
@@ -801,26 +758,24 @@ class HiRadixCache(RadixCache):
         # The minimum is 1 page (page_size tokens)
         effective_threshold = self.page_size if is_l3_first else self.prefetch_threshold
         
+        # Debug: log prefetch conditions
+        rate_limited = self.cache_controller.prefetch_rate_limited() if self.enable_storage else False
+        logger.info(
+            f"[L3-First] prefetch_from_storage: req_id={req_id}, is_l3_first={is_l3_first}, "
+            f"enable_storage={self.enable_storage}, prefetch_length={prefetch_length}, "
+            f"effective_threshold={effective_threshold}, rate_limited={rate_limited}"
+        )
+        
         if (
             not self.enable_storage
             or prefetch_length < effective_threshold
             or self.cache_controller.prefetch_rate_limited()
         ):
-            if is_l3_first:
-                logger.debug(
-                    f"[L3-First] Prefetch skipped for {req_id}: "
-                    f"enable_storage={self.enable_storage}, "
-                    f"prefetch_length={prefetch_length}, "
-                    f"threshold={effective_threshold}, "
-                    f"rate_limited={self.cache_controller.prefetch_rate_limited()}"
-                )
+            skip_reason = "enable_storage=False" if not self.enable_storage else \
+                          f"prefetch_length({prefetch_length}) < threshold({effective_threshold})" if prefetch_length < effective_threshold else \
+                          "rate_limited"
+            logger.info(f"[L3-First] Prefetch SKIPPED for {req_id}: {skip_reason}")
             return
-
-        if is_l3_first:
-            logger.info(
-                f"[L3-First] Starting L3 prefetch for {req_id}: "
-                f"tokens={prefetch_length}, pages={prefetch_length // self.page_size}"
-            )
 
         last_host_node.protect_host()
         host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
@@ -830,10 +785,6 @@ class HiRadixCache(RadixCache):
         if host_indices is None:
             last_host_node.release_host()
             # no sufficient host memory for prefetch
-            if is_l3_first:
-                logger.warning(
-                    f"[L3-First] Prefetch failed for {req_id}: insufficient host memory"
-                )
             return
         operation = self.cache_controller.prefetch(
             req_id, host_indices, new_input_tokens, last_hash, prefix_keys
@@ -1007,14 +958,6 @@ class HiRadixCache(RadixCache):
                 ), "Parent node must have a hash value with storage enabled"
                 new_node.hash_value = []
                 
-                # Debug: log first page tokens for comparison with L3-first query
-                first_page_tokens = key.token_ids[:self.page_size] if len(key) >= self.page_size else key.token_ids
-                logger.info(
-                    f"[Cache Insert] Computing hash for {len(key)} tokens, "
-                    f"first_page_tokens={list(first_page_tokens[:10])}..., "
-                    f"prior_hash={last_hash}"
-                )
-                
                 for idx in range(0, len(key), self.page_size):
                     new_node.hash_value.append(
                         self.cache_controller.get_hash_str(
@@ -1023,11 +966,6 @@ class HiRadixCache(RadixCache):
                         )
                     )
                     last_hash = new_node.hash_value[-1]
-                
-                logger.info(
-                    f"[Cache Insert] First hash={new_node.hash_value[0][:16]}..., "
-                    f"total_pages={len(new_node.hash_value)}"
-                )
 
             if self.cache_controller.write_policy != "write_back":
                 self._inc_hit_count(new_node, chunked)
