@@ -1,5 +1,6 @@
 export HOST_IP=$(ifconfig ens10f0np0.674 | awk '/inet / {print $2}')
 
+CUDA_VISIBLE_DEVICES=6,4,5,7
 SGL_DS3_LOAD_SHARE_NORM=1 \
 SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0 \
 SGLANG_DISABLE_CONSECUTIVE_PREFILL_OVERLAP=1 \
@@ -30,8 +31,7 @@ python3 -m sglang.launch_server \
   --log-requests \
   --log-requests-level 0 \
   --enable-inc-tokenizer \
-  --mem-fraction-static 0.86 \
+  --mem-fraction-static 0.9 \
   --tp 4 \
   --enable-dp-attention \
-  --dp-size 4 \
-  --base-gpu-id 4 
+  --dp-size 4

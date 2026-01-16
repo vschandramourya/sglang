@@ -2,11 +2,16 @@
 set -euo pipefail
 
 HOST="http://10.173.2.69:8000"
+MAX_TOKENS=1
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --host)
       HOST="$2"
+      shift 2
+      ;;
+    --max-tokens)
+      MAX_TOKENS="$2"
       shift 2
       ;;
     *)
@@ -17,6 +22,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 export HOST
+export MAX_TOKENS
 export MODEL="cursor/dsv31-gb200-tgl-test-02"
 export BASE_CONTEXT="$(cat <<'EOF'
 New York City is composed of five boroughs: Manhattan, Brooklyn, Queens, The Bronx, and Staten Island. Each borough has distinct cultural, historical, and social characteristics. Manhattan is often associated with finance, Broadway, museums, and iconic landmarks. Brooklyn is known for creative communities, food scenes, and waterfront parks. Queens is one of the most ethnically diverse places in the world. The Bronx is the birthplace of hip-hop and home to important sports and cultural institutions. Staten Island offers suburban characteristics and views of Manhattan Harbor.
@@ -49,7 +55,7 @@ EOF
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-NUM_REQUESTS=20
+NUM_REQUESTS=64
 python3 - "$TMPDIR" "$NUM_REQUESTS" <<'PY'
 import json, os, sys
 
@@ -57,7 +63,7 @@ tmpdir = sys.argv[1]
 num_requests = int(sys.argv[2])
 
 base_context = os.environ["BASE_CONTEXT"]
-target_tokens = 100 * 1024
+target_tokens = 128 * 1024
 chars_per_token = 4
 target_chars = target_tokens * chars_per_token
 
@@ -94,7 +100,7 @@ In your answer:
       "stream": True,
       "stream_options": {"include_usage": True},
       "temperature": 0.0,
-      "max_tokens": 1,
+      "max_tokens": int(os.environ["MAX_TOKENS"]),
     }
 
     with open(f"{tmpdir}/request_{i}.json", 'w') as f:
