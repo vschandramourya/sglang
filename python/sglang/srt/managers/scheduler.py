@@ -303,6 +303,7 @@ class Scheduler(
         )
         self.gpu_id = gpu_id
         self.page_size = server_args.page_size
+        self.round_robin_counter = 0
         self.enable_hierarchical_cache = server_args.enable_hierarchical_cache
         self.enable_hicache_storage = server_args.hicache_storage_backend is not None
         self.max_recv_per_poll = envs.SGLANG_SCHEDULER_MAX_RECV_PER_POLL.get()
@@ -1448,6 +1449,12 @@ class Scheduler(
 
             if self.disaggregation_mode != DisaggregationMode.NULL:
                 # Invalid request for disaggregated mode
+                if (
+                    recv_req.bootstrap_room is None
+                    and self.server_args.disaggregation_decode_enable_fake_auto
+                ):
+                    recv_req.bootstrap_room = self.round_robin_counter
+                    self.round_robin_counter = self.round_robin_counter + 1
                 if recv_req.bootstrap_room is None:
                     error_msg = (
                         f"Invalid request: Disaggregated request received without "
