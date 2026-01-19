@@ -272,6 +272,11 @@ class HiCacheController:
         self.pp_rank = pp_rank
         self.pp_size = pp_size
 
+        # Support for EAGLE speculative decoding: draft model KV cache
+        self.has_draft_kv_pool = False
+        self.mem_pool_device_draft = None
+        self.mem_pool_host_draft = None
+
         if storage_backend is not None:
             self.storage_backend_type = storage_backend
             from sglang.srt.mem_cache.hicache_storage import get_hash_str
@@ -467,9 +472,18 @@ class HiCacheController:
         start_event.record()
         with device_module.stream(self.write_stream):
             start_event.wait(self.write_stream)
+            # Backup target model KV cache
             self.mem_pool_host.backup_from_device_all_layer(
                 self.mem_pool_device, host_indices, device_indices, self.io_backend
             )
+            # Backup draft model KV cache if EAGLE mode
+            if self.has_draft_kv_pool:
+                self.mem_pool_host_draft.backup_from_device_all_layer(
+                    self.mem_pool_device_draft,
+                    host_indices,
+                    device_indices,
+                    self.io_backend,
+                )
             finish_event.record()
             # NOTE: We must save the host indices and device indices here,
             # this is because we need to guarantee that these tensors are
@@ -531,6 +545,7 @@ class HiCacheController:
         with device_module.stream(self.load_stream):
             producer_event.start_event.wait(self.load_stream)
             for i in range(self.layer_num):
+                # Load target model KV cache
                 self.mem_pool_host.load_to_device_per_layer(
                     self.mem_pool_device,
                     host_indices,
@@ -538,6 +553,17 @@ class HiCacheController:
                     i,
                     self.io_backend,
                 )
+                # Load draft model KV cache if EAGLE mode
+                # Only restore if layer index is within draft model's layer range
+                # TODO: further optimize by only loading layers that are used in current decoding
+                if self.has_draft_kv_pool and i < self.mem_pool_host_draft.layer_num:
+                    self.mem_pool_host_draft.load_to_device_per_layer(
+                        self.mem_pool_device_draft,
+                        host_indices,
+                        device_indices,
+                        i,
+                        self.io_backend,
+                    )
                 producer_event.complete(i)
             # NOTE: We must save the host indices and device indices here,
             # this is because we need to guarantee that these tensors are
@@ -566,6 +592,19 @@ class HiCacheController:
 
         self.mem_pool_host.free(host_indices)
         return len(host_indices)
+
+    def set_draft_kv_pool(self, draft_kv_pool, draft_host_kv_pool):
+        """
+        Set draft model KV pool for EAGLE speculative decoding.
+        This should be called by the scheduler after HiCacheController initialization.
+
+        Args:
+            draft_kv_pool: The draft model's device KV cache pool
+            draft_host_kv_pool: The draft model's host KV cache pool
+        """
+        self.has_draft_kv_pool = True
+        self.mem_pool_device_draft = draft_kv_pool
+        self.mem_pool_host_draft = draft_host_kv_pool
 
     def prefetch(
         self,
@@ -664,14 +703,15 @@ class HiCacheController:
         while not self.stop_event.is_set():
             try:
                 operation = self.prefetch_buffer.get(block=True, timeout=1)
-                
+
                 # Add timing for L3 transfer
                 import time
+
                 transfer_start = time.perf_counter()
-                is_l3_first = (operation.last_hash is None)
-                
+                is_l3_first = operation.last_hash is None
+
                 self._page_transfer(operation)
-                
+
                 transfer_duration = (time.perf_counter() - transfer_start) * 1000  # ms
                 if is_l3_first:
                     logger.debug(
@@ -679,7 +719,7 @@ class HiCacheController:
                         f"pages={len(operation.hash_value)}, tokens={operation.completed_tokens}, "
                         f"transfer_duration={transfer_duration:.2f}ms"
                     )
-                
+
                 # operation terminated by controller, release pre-allocated memory
                 self.append_host_mem_release(
                     operation.host_indices[operation.completed_tokens :]
@@ -701,9 +741,9 @@ class HiCacheController:
         last_hash = operation.last_hash
         tokens_to_fetch = operation.token_ids
         prefix_keys = operation.prefix_keys.copy() if operation.prefix_keys else None
-        
+
         # Check if this is an L3-first query (no prior hash)
-        is_l3_first = (last_hash is None)
+        is_l3_first = last_hash is None
 
         storage_query_count = 0
         hash_value = []
@@ -725,7 +765,7 @@ class HiCacheController:
             hit_page_num = self.storage_backend.batch_exists(batch_hashes, extra_info)
             hash_value.extend(batch_hashes[:hit_page_num])
             storage_query_count += hit_page_num * self.page_size
-            
+
             if hit_page_num < len(batch_hashes):
                 break
             if prefix_keys and len(prefix_keys) > 0:
@@ -759,12 +799,14 @@ class HiCacheController:
                     storage_hit_count = storage_hit_count_tensor.item()
 
                 # Check if this is an L3-first query
-                is_l3_first = (operation.last_hash is None)
-                
+                is_l3_first = operation.last_hash is None
+
                 # For L3-first queries, use a lower threshold since any L3 hit saves computation
                 # The minimum is 1 page (page_size tokens)
-                effective_threshold = self.page_size if is_l3_first else self.prefetch_threshold
-                
+                effective_threshold = (
+                    self.page_size if is_l3_first else self.prefetch_threshold
+                )
+
                 if storage_hit_count < effective_threshold:
                     # not to prefetch if not enough benefits
                     self.prefetch_revoke_queue.put(operation.request_id)
