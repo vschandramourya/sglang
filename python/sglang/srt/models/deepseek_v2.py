@@ -3147,7 +3147,7 @@ class DeepseekV2Model(nn.Module):
                 torch.cuda.current_stream(),
             )
         if len(aux_hidden_states) == 0:
-            return hidden_states
+            return hidden_states, residual
         return hidden_states, aux_hidden_states
 
 
@@ -3285,7 +3285,7 @@ class DeepseekV2ForCausalLM(nn.Module):
                 )
 
         with get_attn_tp_context().maybe_input_scattered(forward_batch):
-            hidden_states = self.model(
+            hidden_states, residual = self.model(
                 input_ids, positions, forward_batch, input_embeds, pp_proxy_tensors
             )
         aux_hidden_states = None
@@ -3294,7 +3294,7 @@ class DeepseekV2ForCausalLM(nn.Module):
 
         if self.pp_group.is_last_rank:
             return self.logits_processor(
-                input_ids, hidden_states, self.lm_head, forward_batch, aux_hidden_states
+                input_ids, hidden_states, residual, self.lm_head, forward_batch, aux_hidden_states
             )
         else:
             return hidden_states

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from sglang.private.test.utils import run_bench_serving
 from sglang.srt.utils import kill_process_tree
+from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.few_shot_gsm8k import run_eval as run_eval_few_shot_gsm8k
 from sglang.test.send_one import BenchArgs, send_one_prompt
 from sglang.test.test_utils import (
@@ -12,6 +13,8 @@ from sglang.test.test_utils import (
     popen_launch_server,
     write_github_step_summary,
 )
+
+register_cuda_ci(est_time=900, suite="per-commit-8-gpu-h200-tgl")
 
 LLAMA4_MAVERICK_MODEL_PATH = "togethercomputer/Llama-4-Maverick-17B-128E-Instruct-FP8"
 

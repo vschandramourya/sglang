@@ -2,219 +2,313 @@ import argparse
 import glob
 import os
 import sys
-from pathlib import Path
-from typing import Optional
+from typing import List
 
-from sglang.test.ci.ci_utils import TestFile, run_unittest_files
+import tabulate
 
-DEFAULT_ESTIMATED_TIME = TestFile.__dataclass_fields__["estimated_time"].default
+from sglang.test.ci.ci_register import CIRegistry, HWBackend, collect_tests
+from sglang.test.ci.ci_utils import run_unittest_files
 
-# Add parent test directory to import from sibling srt directory
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from srt.run_suite import suites as srt_suites
+HW_MAPPING = {
+    "cuda": HWBackend.CUDA,
+}
+
+# Per-commit test suites (run on every PR)
+PER_COMMIT_SUITES = {
+    HWBackend.CUDA: [
+        "per-commit-4-gpu-b200-tgl",
+        "per-commit-8-gpu-h200-tgl",
+    ],
+    HWBackend.NPU: [],
+}
+
+# Nightly test suites (run nightly, organized by GPU configuration)
+NIGHTLY_SUITES = {
+    HWBackend.CUDA: [],
+}
 
 
-def patch_test_file_with_prefix(prefix: str, test_file: TestFile):
-    return TestFile(os.path.join(prefix, test_file.name), test_file.estimated_time)
-
-
-patched_srt_suites = {
-    key: [
-        patch_test_file_with_prefix("../srt", srt_test_file) for srt_test_file in value
+def filter_tests(
+    ci_tests: List[CIRegistry], hw: HWBackend, suite: str, nightly: bool = False
+) -> List[CIRegistry]:
+    ci_tests = [
+        t
+        for t in ci_tests
+        if t.backend == hw and t.suite == suite and t.nightly == nightly
     ]
-    for key, value in srt_suites.items()
-}
 
-suites = {
-    "per-commit-4-gpu-b200": patched_srt_suites["per-commit-4-gpu-b200"],
-    "per-commit-4-gpu-b200-cursor": [
-        TestFile("test_deepseek_v3_fp4_4gpu_cursor.py", 3600),
-        TestFile("test_deepseek_v3_fp4_4gpu_cursor2.py", 3600),
-    ],
-    "per-commit-4-gpu-b200-cursor-phoenix": [
-        TestFile("test_deepseek_v3_fp4_4gpu_cursor_phoenix.py", 3600),
-    ],
-    "per-commit-8-gpu-h200-tgl": [
-        TestFile("test_llama4-maverick.py", 3600),
-    ],
-    "per-commit-1-gpu-tgl": [
-        TestFile("test_mla_deepseek_v3.py", 60),
-    ],
-    "__not_in_ci__": [
-        TestFile("test_nightly_text_models_perf.py", 60),
-        TestFile("test_nightly_vlms_perf.py", 60),
-    ],
-}
-
-
-# MODIFY THE SUITES ON DEMAND HERE
-def upsert_test_file_in_suite(
-    suite_name: str, test_file_name: str, new_estimated_time: Optional[float] = None
-):
-    for idx, test_file in enumerate(suites[suite_name]):
-        if test_file_name in test_file.name:
-            suites[suite_name][idx] = TestFile(
-                test_file_name,
-                (
-                    new_estimated_time
-                    if new_estimated_time is not None
-                    else test_file.estimated_time
-                ),
-            )
-            return
-
-    suites[suite_name].append(
-        TestFile(
-            test_file_name,
-            (
-                new_estimated_time
-                if new_estimated_time is not None
-                else DEFAULT_ESTIMATED_TIME
-            ),
-        )
+    valid_suites = (
+        NIGHTLY_SUITES.get(hw, []) if nightly else PER_COMMIT_SUITES.get(hw, [])
     )
 
+    if suite not in valid_suites:
+        print(
+            f"Warning: Unknown suite {suite} for backend {hw.name}, nightly={nightly}"
+        )
 
-def remove_test_file_from_suite(suite_name: str, test_file_name: str):
-    suites[suite_name] = [t for t in suites[suite_name] if test_file_name not in t.name]
+    enabled_tests = [t for t in ci_tests if t.disabled is None]
+    skipped_tests = [t for t in ci_tests if t.disabled is not None]
+
+    return enabled_tests, skipped_tests
 
 
-# TODO: add this back after the bug is fixed
-upsert_test_file_in_suite("per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu.py", 3600)
-upsert_test_file_in_suite(
-    "per-commit-4-gpu-b200", "test_deepseek_v3_fp4_4gpu2.py", 3600
-)
+def _normalize_ci_path(path: str) -> str:
+    """Normalize user-provided paths to match CI registry filenames."""
+    if not path:
+        return ""
+    abs_path = os.path.abspath(path)
+    cwd = os.getcwd()
+    try:
+        rel_path = os.path.relpath(abs_path, cwd)
+    except ValueError:
+        rel_path = path
+    norm_path = os.path.normpath(rel_path)
+    prefix = f"test{os.sep}"
+    if norm_path.startswith(prefix):
+        norm_path = norm_path[len(prefix) :]
+    return norm_path
 
 
-def auto_partition(files, rank, size):
+def apply_manual_skips(
+    ci_tests: List[CIRegistry],
+    skipped_tests: List[CIRegistry],
+    skip_args: List[str],
+) -> tuple[List[CIRegistry], List[CIRegistry]]:
+    if not skip_args:
+        return ci_tests, skipped_tests
+
+    default_reason = "manually skipped via --skip-file"
+    skip_map: dict[str, str] = {}
+    for raw in skip_args:
+        if "=" in raw:
+            path, reason = raw.split("=", 1)
+            reason = reason.strip() or default_reason
+        else:
+            path, reason = raw, default_reason
+        norm_path = _normalize_ci_path(path.strip())
+        skip_map[norm_path] = reason
+
+    filtered_tests: List[CIRegistry] = []
+    matched: set[str] = set()
+    for test in ci_tests:
+        filename_norm = _normalize_ci_path(test.filename)
+        reason = skip_map.get(filename_norm)
+        if reason:
+            matched.add(filename_norm)
+            skipped_tests.append(
+                CIRegistry(
+                    backend=test.backend,
+                    filename=test.filename,
+                    est_time=test.est_time,
+                    suite=test.suite,
+                    nightly=test.nightly,
+                    disabled=reason,
+                )
+            )
+            continue
+        filtered_tests.append(test)
+
+    unmatched = set(skip_map.keys()) - matched
+    for missing in sorted(unmatched):
+        print(f"Warning: --skip-file target '{missing}' not found in selected tests.")
+
+    return filtered_tests, skipped_tests
+
+
+def auto_partition(files: List[CIRegistry], rank, size):
     """
     Partition files into size sublists with approximately equal sums of estimated times
-    using stable sorting, and return the partition for the specified rank.
-
-    Args:
-        files (list): List of file objects with estimated_time attribute
-        rank (int): Index of the partition to return (0 to size-1)
-        size (int): Number of partitions
-
-    Returns:
-        list: List of file objects in the specified rank's partition
+    using a greedy algorithm (LPT heuristic), and return the partition for the specified rank.
     """
-    weights = [f.estimated_time for f in files]
-
-    if not weights or size <= 0 or size > len(weights):
+    if not files or size <= 0:
         return []
 
-    # Create list of (weight, original_index) tuples
-    # Using negative index as secondary key to maintain original order for equal weights
-    indexed_weights = [(w, -i) for i, w in enumerate(weights)]
-    # Stable sort in descending order by weight
-    # If weights are equal, larger (negative) index comes first (i.e., earlier original position)
-    indexed_weights = sorted(indexed_weights, reverse=True)
+    # Sort files by estimated_time in descending order (LPT heuristic)
+    sorted_files = sorted(files, key=lambda f: f.est_time, reverse=True)
 
-    # Extract original indices (negate back to positive)
-    indexed_weights = [(w, -i) for w, i in indexed_weights]
-
-    # Initialize partitions and their sums
     partitions = [[] for _ in range(size)]
-    sums = [0.0] * size
+    partition_sums = [0.0] * size
 
-    # Greedy approach: assign each weight to partition with smallest current sum
-    for weight, idx in indexed_weights:
-        # Find partition with minimum sum
-        min_sum_idx = sums.index(min(sums))
-        partitions[min_sum_idx].append(idx)
-        sums[min_sum_idx] += weight
+    # Greedily assign each file to the partition with the smallest current total time
+    for file in sorted_files:
+        min_sum_idx = min(range(size), key=partition_sums.__getitem__)
+        partitions[min_sum_idx].append(file)
+        partition_sums[min_sum_idx] += file.est_time
 
-    # Return the files corresponding to the indices in the specified rank's partition
-    indices = partitions[rank]
-    return [files[i] for i in indices]
+    if rank < size:
+        return partitions[rank]
+    return []
 
 
-def _sanity_check_suites(suites):
-    dir_base = Path(__file__).parent
-    disk_files = set(
-        [
-            str(x.relative_to(dir_base))
-            for x in dir_base.glob("**/*.py")
-            if x.name.startswith("test_")
-        ]
+def pretty_print_tests(
+    args, ci_tests: List[CIRegistry], skipped_tests: List[CIRegistry]
+):
+    hw = HW_MAPPING[args.hw]
+    suite = args.suite
+    nightly = args.nightly
+    if args.auto_partition_size:
+        partition_info = (
+            f"{args.auto_partition_id + 1}/{args.auto_partition_size} "
+            f"(0-based id={args.auto_partition_id})"
+        )
+    else:
+        partition_info = "full"
+
+    headers = ["Hardware", "Suite", "Nightly", "Partition"]
+    rows = [[hw.name, suite, str(nightly), partition_info]]
+    msg = tabulate.tabulate(rows, headers=headers, tablefmt="psql") + "\n"
+
+    if skipped_tests:
+        msg += f"⚠️  Skipped {len(skipped_tests)} test(s):\n"
+        for t in skipped_tests:
+            reason = t.disabled or "disabled"
+            msg += f"  - {t.filename} (reason: {reason})\n"
+        msg += "\n"
+
+    if len(ci_tests) == 0:
+        msg += f"No tests found for hw={hw.name}, suite={suite}, nightly={nightly}\n"
+        msg += "This is expected during incremental migration. Skipping.\n"
+    else:
+        total_est_time = sum(t.est_time for t in ci_tests)
+        msg += (
+            f"✅ Enabled {len(ci_tests)} test(s) (est total {total_est_time:.1f}s):\n"
+        )
+        for t in ci_tests:
+            msg += f"  - {t.filename} (est_time={t.est_time})\n"
+
+    print(msg, flush=True)
+
+
+def run_a_suite(args):
+    hw = HW_MAPPING[args.hw]
+    suite = args.suite
+    nightly = args.nightly
+    auto_partition_id = args.auto_partition_id
+    auto_partition_size = args.auto_partition_size
+
+    # All tests (per-commit and nightly) are now in registered/
+    files = glob.glob("registered/**/*.py", recursive=True)
+
+    # Strict: all registered files must have proper registration
+    sanity_check = True
+
+    all_tests = collect_tests(files, sanity_check=sanity_check)
+    ci_tests, skipped_tests = filter_tests(all_tests, hw, suite, nightly)
+    ci_tests, skipped_tests = apply_manual_skips(
+        ci_tests, skipped_tests, args.skip_file
     )
 
-    suite_files = set(
-        [test_file.name for _, suite in suites.items() for test_file in suite]
-    )
+    if auto_partition_size:
+        ci_tests = auto_partition(ci_tests, auto_partition_id, auto_partition_size)
 
-    missing_files = sorted(list(disk_files - suite_files))
-    missing_text = "\n".join(f'TestFile("{x}"),' for x in missing_files)
-    assert len(missing_files) == 0, (
-        f"Some test files are not in test suite. "
-        f"If this is intentional, please add the following to `not_in_ci` section:\n"
-        f"{missing_text}"
+    pretty_print_tests(args, ci_tests, skipped_tests)
+
+    # Add extra timeout when retry is enabled
+    timeout = args.timeout_per_file
+    if args.enable_retry:
+        timeout += args.retry_timeout_increase
+
+    return run_unittest_files(
+        ci_tests,
+        timeout_per_file=timeout,
+        continue_on_error=args.continue_on_error,
+        enable_retry=args.enable_retry,
+        max_attempts=args.max_attempts,
+        retry_wait_seconds=args.retry_wait_seconds,
     )
 
 
 def main():
-    arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument(
+    parser = argparse.ArgumentParser(
+        description="Run CI test suites from test/registered/"
+    )
+    parser.add_argument(
+        "--hw",
+        type=str,
+        choices=HW_MAPPING.keys(),
+        required=True,
+        help="Hardware backend to run tests on.",
+    )
+    parser.add_argument("--suite", type=str, required=True, help="Test suite to run.")
+    parser.add_argument(
+        "--nightly",
+        action="store_true",
+        help="Run nightly tests instead of per-commit tests.",
+    )
+    parser.add_argument(
         "--timeout-per-file",
         type=int,
-        default=1800,
-        help="The time limit for running one file in seconds.",
+        default=1200,
+        help="The time limit for running one file in seconds (default: 1200).",
     )
-    arg_parser.add_argument(
-        "--suite",
-        type=str,
-        default=list(suites.keys())[0],
-        choices=list(suites.keys()) + ["all"],
-        help="The suite to run",
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        default=False,
+        help="Continue running remaining tests even if one fails (default: False, useful for nightly tests).",
     )
-    arg_parser.add_argument(
-        "--range-begin",
-        type=int,
-        default=0,
-        help="The begin index of the range of the files to run.",
-    )
-    arg_parser.add_argument(
-        "--range-end",
-        type=int,
-        default=None,
-        help="The end index of the range of the files to run.",
-    )
-    arg_parser.add_argument(
+    parser.add_argument(
         "--auto-partition-id",
         type=int,
         help="Use auto load balancing. The part id.",
     )
-    arg_parser.add_argument(
+    parser.add_argument(
         "--auto-partition-size",
         type=int,
         help="Use auto load balancing. The number of parts.",
     )
-    arg_parser.add_argument(
-        "--continue-on-error",
+    parser.add_argument(
+        "--enable-retry",
         action="store_true",
         default=False,
-        help="Continue running remaining tests even if one fails (useful for nightly tests)",
+        help="Enable smart retry for accuracy/performance assertion failures (not code errors)",
     )
-    args = arg_parser.parse_args()
-    print(f"{args=}")
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=2,
+        help="Maximum number of attempts per file including initial run (default: 2)",
+    )
+    parser.add_argument(
+        "--retry-wait-seconds",
+        type=int,
+        default=60,
+        help="Seconds to wait between retries (default: 60)",
+    )
+    parser.add_argument(
+        "--retry-timeout-increase",
+        type=int,
+        default=600,
+        help="Additional timeout in seconds when retry is enabled (default: 600)",
+    )
+    parser.add_argument(
+        "--skip-file",
+        action="append",
+        default=[],
+        metavar="PATH[=REASON]",
+        help=(
+            "Skip a registered test file (relative path as shown in listings). "
+            "Can be provided multiple times. Optionally specify a reason via PATH=REASON."
+        ),
+    )
+    args = parser.parse_args()
 
-    _sanity_check_suites(suites)
+    # Validate auto-partition arguments
+    if (args.auto_partition_id is not None) != (args.auto_partition_size is not None):
+        parser.error(
+            "--auto-partition-id and --auto-partition-size must be specified together."
+        )
+    if args.auto_partition_size is not None:
+        if args.auto_partition_size <= 0:
+            parser.error("--auto-partition-size must be positive.")
+        if not 0 <= args.auto_partition_id < args.auto_partition_size:
+            parser.error(
+                f"--auto-partition-id must be in range [0, {args.auto_partition_size}), "
+                f"but got {args.auto_partition_id}"
+            )
 
-    if args.suite == "all":
-        files = glob.glob("**/test_*.py", recursive=True)
-    else:
-        files = suites[args.suite]
-
-    if args.auto_partition_size:
-        files = auto_partition(files, args.auto_partition_id, args.auto_partition_size)
-    else:
-        files = files[args.range_begin : args.range_end]
-
-    print("The running tests are ", [f.name for f in files])
-
-    exit_code = run_unittest_files(files, args.timeout_per_file, args.continue_on_error)
-    exit(exit_code)
+    exit_code = run_a_suite(args)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

@@ -376,7 +376,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [0, 1, 2]
+        partition: [0, 1, 2, 3, 4, 5]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -389,51 +389,8 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+          IS_BLACKWELL=1 python3 run_suite.py --hw cuda --suite per-commit-4-gpu-b200-tgl --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --continue-on-error --timeout-per-file 3600
 
-  unit-test-backend-4-gpu-b200-cursor:
-    needs: [check-changes]
-    if: always() && !failure() && !cancelled()
-    runs-on: b200-runner
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [0, 1]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
-
-      - name: Run test
-        timeout-minutes: 60
-        run: |
-          cd test/tgl
-          IS_BLACKWELL=1 SGLANG_TEST_MAX_RETRY=5 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
-
-  unit-test-backend-4-gpu-b200-cursor-phoenix:
-    needs: [check-changes]
-    if: always() && !failure() && !cancelled()
-    runs-on: b200-runner
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [0]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
-
-      - name: Run test
-        timeout-minutes: 60
-        run: |
-          cd test/tgl
-          IS_BLACKWELL=1 SGLANG_TEST_MAX_RETRY=5 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor-phoenix --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
 
   unit-test-backend-8-gpu-h200-tgl:
     needs: [check-changes]
@@ -442,7 +399,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [0]
+        partition: [0]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -455,12 +412,17 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          python3 run_suite.py --suite per-commit-8-gpu-h200-tgl --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+          python3 run_suite.py --hw cuda --suite per-commit-8-gpu-h200-tgl --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --continue-on-error --timeout-per-file 3600
+
 
   per-commit-1-gpu-tgl:
     needs: [check-changes]
     if: always() && !failure() && !cancelled()
     runs-on: 1-gpu-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [0]
     env:
       RUNNER_LABELS: 1-gpu-runner
     steps:
@@ -476,7 +438,7 @@ jobs:
         timeout-minutes: 20
         run: |
           cd test/tgl
-          python3 run_suite.py --suite per-commit-1-gpu-tgl --continue-on-error
+          python3 run_suite.py --hw cuda --suite per-commit-1-gpu-tgl --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --continue-on-error --timeout-per-file 600
 
   pr-test-finish:
     needs: [
@@ -494,7 +456,6 @@ jobs:
       accuracy-test-1-gpu,
       accuracy-test-2-gpu,
       unit-test-backend-4-gpu-b200,
-      unit-test-backend-4-gpu-b200-cursor,
       unit-test-backend-8-gpu-h200-tgl
     ]
     if: always()

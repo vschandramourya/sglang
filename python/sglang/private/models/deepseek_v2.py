@@ -155,7 +155,7 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
         input_embeds: torch.Tensor = None,
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
     ) -> torch.Tensor:
-        hidden_states = self.model(
+        hidden_states, residual = self.model(
             input_ids, positions, forward_batch, input_embeds, pp_proxy_tensors
         )
 
@@ -171,6 +171,7 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
             return self.logits_processor(
                 input_ids,
                 hidden_states,
+                residual,
                 self.lm_head,
                 forward_batch,
                 aux_hidden_states,
