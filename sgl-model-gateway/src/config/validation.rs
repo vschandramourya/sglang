@@ -103,6 +103,7 @@ impl ConfigValidator {
                 decode_urls,
                 prefill_policy,
                 decode_policy,
+                ..
             } => {
                 // Allow empty URLs even without service discovery to support dynamic worker addition
                 // URLs will be validated if provided
@@ -558,6 +559,7 @@ impl ConfigValidator {
                 decode_urls,
                 prefill_policy,
                 decode_policy,
+                ..
             } = &config.mode
             {
                 if let Some(PolicyConfig::PowerOfTwo { .. }) = prefill_policy {
@@ -746,6 +748,11 @@ mod tests {
                 decode_urls: vec!["http://decode:8000".to_string()],
                 prefill_policy: None,
                 decode_policy: None,
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random,
         );
@@ -762,6 +769,11 @@ mod tests {
                 decode_urls: vec!["http://decode:8000".to_string()],
                 prefill_policy: None,
                 decode_policy: None,
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::RoundRobin,
         );
@@ -779,6 +791,11 @@ mod tests {
                 decode_urls: vec!["http://decode:8000".to_string()],
                 prefill_policy: None,
                 decode_policy: None,
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::CacheAware {
                 cache_threshold: 0.5,
@@ -834,6 +851,11 @@ mod tests {
                 decode_policy: Some(PolicyConfig::PowerOfTwo {
                     load_check_interval_secs: 60,
                 }),
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random, // Main policy as fallback
         );
@@ -855,6 +877,11 @@ mod tests {
                     load_check_interval_secs: 60,
                 }), // Requires 2+ workers
                 decode_policy: None,
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random,
         );
@@ -886,6 +913,11 @@ mod tests {
                 decode_policy: Some(PolicyConfig::PowerOfTwo {
                     load_check_interval_secs: 60,
                 }),
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random, // Main policy as fallback
         );
@@ -916,6 +948,11 @@ mod tests {
                     balance_rel_threshold: 1.1,
                     bucket_adjust_interval_secs: 5,
                 }),
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random, // Main policy as fallback
         );
@@ -936,6 +973,11 @@ mod tests {
                 decode_urls: vec![],
                 prefill_policy: None,
                 decode_policy: None,
+                pre_prefill_url: None,
+                pre_prefill_decode_url: None,
+                pre_prefill_match_threshold: 0.1,
+                pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random,
         );

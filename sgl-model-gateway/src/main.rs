@@ -210,6 +210,27 @@ struct CliArgs {
     #[arg(long, value_parser = ["random", "round_robin", "cache_aware", "power_of_two", "prefix_hash", "manual"], help_heading = "PD Disaggregation")]
     decode_policy: Option<String>,
 
+    /// Pre-prefill worker URL for cold sessions (low cache match)
+    #[arg(long, help_heading = "PD Disaggregation")]
+    pre_prefill_url: Option<String>,
+
+    /// Decode worker URL paired with pre-prefill (optional)
+    #[arg(long, help_heading = "PD Disaggregation")]
+    pre_prefill_decode_url: Option<String>,
+
+    /// Cache match ratio threshold for pre-prefill routing (0.0-1.0, default: 0.1 = 10%)
+    #[arg(long, default_value_t = 0.1, help_heading = "PD Disaggregation")]
+    pre_prefill_match_threshold: f32,
+
+    /// Unmatched chars threshold for pre-prefill routing (default: 10000)
+    #[arg(long, default_value_t = 10000, help_heading = "PD Disaggregation")]
+    pre_prefill_unmatched_chars_threshold: usize,
+
+    /// Minimum estimated tokens for pre-prefill routing (default: 10000)
+    /// Requests with fewer estimated tokens will skip pre-prefill and use normal routing
+    #[arg(long, default_value_t = 10000, help_heading = "PD Disaggregation")]
+    pre_prefill_min_tokens: usize,
+
     /// Timeout in seconds for worker startup and registration
     #[arg(long, default_value_t = 1800, help_heading = "PD Disaggregation")]
     worker_startup_timeout_secs: u64,
@@ -876,6 +897,11 @@ impl CliArgs {
                 decode_urls: self.decode.clone(),
                 prefill_policy: self.prefill_policy.as_ref().map(|p| self.parse_policy(p)),
                 decode_policy: self.decode_policy.as_ref().map(|p| self.parse_policy(p)),
+                pre_prefill_url: self.pre_prefill_url.clone(),
+                pre_prefill_decode_url: self.pre_prefill_decode_url.clone(),
+                pre_prefill_match_threshold: self.pre_prefill_match_threshold,
+                pre_prefill_unmatched_chars_threshold: self.pre_prefill_unmatched_chars_threshold,
+                pre_prefill_min_tokens: self.pre_prefill_min_tokens,
             }
         } else {
             RoutingMode::Regular {
