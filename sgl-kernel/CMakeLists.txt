@@ -129,7 +129,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
     set(DEFAULT_ENABLE_BELOW_SM90 OFF)
     message(STATUS "For aarch64, disable gencode below SM90 by default")
 else()
-    set(DEFAULT_ENABLE_BELOW_SM90 OFF)
+    set(DEFAULT_ENABLE_BELOW_SM90 ON)
 endif()
 
 option(ENABLE_BELOW_SM90 "Enable gencode below SM90" ${DEFAULT_ENABLE_BELOW_SM90})
@@ -363,7 +363,6 @@ set(INCLUDES
     ${repo-cutlass_SOURCE_DIR}/examples/77_blackwell_fmha
     ${repo-cutlass_SOURCE_DIR}/examples/common
     ${repo-flash-attention_SOURCE_DIR}/csrc/flash_attn/src
-    /usr/local/cuda/include/cccl
 )
 
 # =========================== Common SM90 Build ============================= #
@@ -418,9 +417,6 @@ add_subdirectory(
     ${repo-mscclpp_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}/mscclpp-build
 )
-
-# Add CCCL include path to mscclpp to fix cuda/atomic header not found issue
-target_include_directories(mscclpp_obj SYSTEM PRIVATE /usr/local/cuda/include/cccl)
 
 target_link_libraries(common_ops_sm90_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
 target_link_libraries(common_ops_sm100_build PRIVATE ${TORCH_LIBRARIES} c10 cuda cublas cublasLt mscclpp_static)
@@ -559,11 +555,10 @@ Python_add_library(deep_gemm_cpp MODULE USE_SABI ${SKBUILD_SABI_VERSION} WITH_SO
 target_link_libraries(deep_gemm_cpp PRIVATE ${TORCH_LIBRARIES} c10 cuda nvrtc mscclpp_static)
 
 # Add include directories needed by DeepGEMM.
-target_include_directories(deep_gemm_cpp SYSTEM PRIVATE
+target_include_directories(deep_gemm_cpp PRIVATE
     ${repo-deepgemm_SOURCE_DIR}/deep_gemm/include
     ${repo-cutlass_SOURCE_DIR}/include
     ${repo-fmt_SOURCE_DIR}/include
-    /usr/local/cuda/include/cccl
 )
 
 # Apply the same compile options as common_ops.
