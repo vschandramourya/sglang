@@ -6,6 +6,7 @@ set -euo pipefail
 export HOST_IP=$(ifconfig ens10f0np0.674 | awk '/inet / {print $2}')
 export SGL_DS3_LOAD_SHARE_NORM=1
 export SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=0
+# export SGLANG_EXPERIMENTAL_CPP_RADIX_TREE=1
 
 python3 -m sglang.launch_server \
   --model-path "/data/dsv31-agent-1003-bt-rl-1026-mtp-2-force-thinkFP4/" \
@@ -33,12 +34,12 @@ python3 -m sglang.launch_server \
   --max-running-requests 32 \
   --log-requests \
   --log-requests-level 0 \
-  --chunked-prefill-size 131072 \
-  --mem-fraction-static 0.72 \
+  --chunked-prefill-size 65536 \
+  --mem-fraction-static 0.75 \
   --enable-inc-tokenizer \
   --enable-trtllm-mla-fp8-prefill \
   --enable-mla-k-transform-kernel \
-  --hicache-ratio 3.0 \
+  --hicache-ratio 8.0 \
   --enable-hierarchical-cache \
   --hicache-io-backend kernel \
   --hicache-write-policy write_through
