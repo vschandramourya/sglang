@@ -32,6 +32,7 @@ class RouterArgs:
     pre_prefill_decode_url: Optional[str] = None  # Optional paired decode URL
     pre_prefill_match_threshold: float = 0.1  # 10% - cache match ratio <= this => cold
     pre_prefill_unmatched_chars_threshold: int = 10000  # unmatched chars >= this => cold
+    pre_prefill_min_tokens: int = 10000  # skip pre-prefill if estimated tokens < this
     worker_startup_timeout_secs: int = 1800
     worker_startup_check_interval: int = 30
     cache_threshold: float = 0.3
@@ -297,6 +298,12 @@ class RouterArgs:
             type=int,
             default=RouterArgs.pre_prefill_unmatched_chars_threshold,
             help="PD only: if unmatched chars >= this threshold, route to pre-prefill. Default 10000",
+        )
+        routing_group.add_argument(
+            f"--{prefix}pre-prefill-min-tokens",
+            type=int,
+            default=RouterArgs.pre_prefill_min_tokens,
+            help="PD only: skip pre-prefill if estimated tokens < this threshold. Default 10000",
         )
         routing_group.add_argument(
             f"--{prefix}cache-threshold",

@@ -56,6 +56,7 @@ pub struct PDRouter {
     pub pre_prefill_decode_url: Option<String>,
     pub pre_prefill_match_threshold: f32,
     pub pre_prefill_unmatched_chars_threshold: usize,
+    pub pre_prefill_min_tokens: usize,
 }
 
 #[derive(Clone)]
@@ -167,20 +168,23 @@ impl PDRouter {
             pre_prefill_decode_url,
             pre_prefill_match_threshold,
             pre_prefill_unmatched_chars_threshold,
+            pre_prefill_min_tokens,
         ) = match &ctx.router_config.mode {
             RoutingMode::PrefillDecode {
                 pre_prefill_url,
                 pre_prefill_decode_url,
                 pre_prefill_match_threshold,
                 pre_prefill_unmatched_chars_threshold,
+                pre_prefill_min_tokens,
                 ..
             } => (
                 pre_prefill_url.clone(),
                 pre_prefill_decode_url.clone(),
                 *pre_prefill_match_threshold,
                 *pre_prefill_unmatched_chars_threshold,
+                *pre_prefill_min_tokens,
             ),
-            _ => (None, None, 0.0, 0),
+            _ => (None, None, 0.0, 0, 0),
         };
 
         Ok(PDRouter {
@@ -194,6 +198,7 @@ impl PDRouter {
             pre_prefill_decode_url,
             pre_prefill_match_threshold,
             pre_prefill_unmatched_chars_threshold,
+            pre_prefill_min_tokens,
         })
     }
 
@@ -759,6 +764,7 @@ impl PDRouter {
     ) -> Result<Arc<dyn Worker>, String> {
         // Prefill selection:
         // - If pre_prefill_url is configured and prefill policy is cache_aware and request_text exists:
+        //   - Skip pre-prefill if estimated tokens < pre_prefill_min_tokens
         //   - cold => route to pre_prefill_url
         //   - warm => pick random normal prefill
         // - Otherwise => use policy selection.
@@ -781,6 +787,30 @@ impl PDRouter {
                 let (matched_chars, total_chars) = cache_aware
                     .estimate_match_stats(&available_prefill, text)
                     .unwrap_or((0, 0));
+
+                // Estimate token count (roughly 4 chars per token for English/code)
+                let estimated_tokens = total_chars / 4;
+
+                // Skip pre-prefill routing for short requests
+                if self.pre_prefill_min_tokens > 0 && estimated_tokens < self.pre_prefill_min_tokens {
+                    debug!(
+                        "Pre-prefill routing: SKIPPED - estimated_tokens={} < min_tokens={}, using standard policy",
+                        estimated_tokens,
+                        self.pre_prefill_min_tokens
+                    );
+                    // Use standard policy selection for short requests
+                    let selected = Self::pick_worker_by_policy_arc(
+                        prefill_workers,
+                        prefill_policy,
+                        request_text,
+                        headers,
+                        hash_ring,
+                        "prefill",
+                    )?;
+                    cache_aware.record_assignment(&available_prefill, text, selected.url());
+                    return Ok(selected);
+                }
+
                 let match_ratio = if total_chars == 0 {
                     0.0
                 } else {
@@ -793,9 +823,10 @@ impl PDRouter {
                 let is_cold = is_cold_by_ratio || is_cold_by_unmatched;
 
                 debug!(
-                    "Pre-prefill routing: total_chars={} matched_chars={} unmatched_chars={} \
+                    "Pre-prefill routing: estimated_tokens={} total_chars={} matched_chars={} unmatched_chars={} \
                      match_ratio={:.2}% threshold={:.0}% is_cold_by_ratio={} \
                      unmatched_threshold={} is_cold_by_unmatched={} => is_cold={}",
+                    estimated_tokens,
                     total_chars,
                     matched_chars,
                     unmatched_chars,

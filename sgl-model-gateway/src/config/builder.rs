@@ -62,6 +62,7 @@ impl RouterConfigBuilder {
             pre_prefill_decode_url: None,
             pre_prefill_match_threshold: crate::config::types::default_pre_prefill_match_threshold(),
             pre_prefill_unmatched_chars_threshold: crate::config::types::default_pre_prefill_unmatched_chars_threshold(),
+            pre_prefill_min_tokens: crate::config::types::default_pre_prefill_min_tokens(),
         };
         self
     }
@@ -83,6 +84,7 @@ impl RouterConfigBuilder {
             pre_prefill_decode_url: None,
             pre_prefill_match_threshold: crate::config::types::default_pre_prefill_match_threshold(),
             pre_prefill_unmatched_chars_threshold: crate::config::types::default_pre_prefill_unmatched_chars_threshold(),
+            pre_prefill_min_tokens: crate::config::types::default_pre_prefill_min_tokens(),
         };
         self
     }

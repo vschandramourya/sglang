@@ -274,8 +274,8 @@ class MooncakeStore(HiCacheStorage):
                 self.extra_backend_tag = extra_config["extra_backend_tag"]
                 logger.info(f"Using extra_backend_tag: {self.extra_backend_tag}")
 
-            # Check server status
-            if self.config.check_server:
+            # Check server status (only in Real Client mode, not Dummy Client)
+            if self.config.check_server and not self.config.standalone_storage:
                 self.check_server()
 
             # Handle JSON device_name configuration

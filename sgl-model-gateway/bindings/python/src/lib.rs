@@ -377,6 +377,7 @@ struct Router {
     pre_prefill_decode_url: Option<String>,
     pre_prefill_match_threshold: f32,
     pre_prefill_unmatched_chars_threshold: usize,
+    pre_prefill_min_tokens: usize,
     max_concurrent_requests: i32,
     cors_allowed_origins: Vec<String>,
     retry_max_retries: u32,
@@ -496,6 +497,7 @@ impl Router {
                 pre_prefill_decode_url: self.pre_prefill_decode_url.clone(),
                 pre_prefill_match_threshold: self.pre_prefill_match_threshold,
                 pre_prefill_unmatched_chars_threshold: self.pre_prefill_unmatched_chars_threshold,
+                pre_prefill_min_tokens: self.pre_prefill_min_tokens,
             }
         } else {
             RoutingMode::Regular {
@@ -688,6 +690,7 @@ impl Router {
         pre_prefill_decode_url = None,
         pre_prefill_match_threshold = 0.1,
         pre_prefill_unmatched_chars_threshold = 10000,
+        pre_prefill_min_tokens = 10000,
         max_concurrent_requests = -1,
         cors_allowed_origins = vec![],
         retry_max_retries = 5,
@@ -778,6 +781,7 @@ impl Router {
         pre_prefill_decode_url: Option<String>,
         pre_prefill_match_threshold: f32,
         pre_prefill_unmatched_chars_threshold: usize,
+        pre_prefill_min_tokens: usize,
         max_concurrent_requests: i32,
         cors_allowed_origins: Vec<String>,
         retry_max_retries: u32,
@@ -881,6 +885,7 @@ impl Router {
             pre_prefill_decode_url,
             pre_prefill_match_threshold,
             pre_prefill_unmatched_chars_threshold,
+            pre_prefill_min_tokens,
             max_concurrent_requests,
             cors_allowed_origins,
             retry_max_retries,

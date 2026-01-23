@@ -226,6 +226,11 @@ struct CliArgs {
     #[arg(long, default_value_t = 10000, help_heading = "PD Disaggregation")]
     pre_prefill_unmatched_chars_threshold: usize,
 
+    /// Minimum estimated tokens for pre-prefill routing (default: 10000)
+    /// Requests with fewer estimated tokens will skip pre-prefill and use normal routing
+    #[arg(long, default_value_t = 10000, help_heading = "PD Disaggregation")]
+    pre_prefill_min_tokens: usize,
+
     /// Timeout in seconds for worker startup and registration
     #[arg(long, default_value_t = 1800, help_heading = "PD Disaggregation")]
     worker_startup_timeout_secs: u64,
@@ -896,6 +901,7 @@ impl CliArgs {
                 pre_prefill_decode_url: self.pre_prefill_decode_url.clone(),
                 pre_prefill_match_threshold: self.pre_prefill_match_threshold,
                 pre_prefill_unmatched_chars_threshold: self.pre_prefill_unmatched_chars_threshold,
+                pre_prefill_min_tokens: self.pre_prefill_min_tokens,
             }
         } else {
             RoutingMode::Regular {

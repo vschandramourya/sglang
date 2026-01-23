@@ -752,6 +752,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random,
         );
@@ -772,6 +773,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::RoundRobin,
         );
@@ -793,6 +795,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::CacheAware {
                 cache_threshold: 0.5,
@@ -852,6 +855,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random, // Main policy as fallback
         );
@@ -877,6 +881,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random,
         );
@@ -912,6 +917,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random, // Main policy as fallback
         );
@@ -946,6 +952,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random, // Main policy as fallback
         );
@@ -970,6 +977,7 @@ mod tests {
                 pre_prefill_decode_url: None,
                 pre_prefill_match_threshold: 0.1,
                 pre_prefill_unmatched_chars_threshold: 10000,
+                pre_prefill_min_tokens: 10000,
             },
             PolicyConfig::Random,
         );

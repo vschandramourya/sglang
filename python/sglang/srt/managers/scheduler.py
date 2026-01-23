@@ -303,7 +303,6 @@ class Scheduler(
         )
         self.gpu_id = gpu_id
         self.page_size = server_args.page_size
-        self.round_robin_counter = 0
         self.enable_hierarchical_cache = server_args.enable_hierarchical_cache
         self.enable_hicache_storage = server_args.hicache_storage_backend is not None
         self.max_recv_per_poll = envs.SGLANG_SCHEDULER_MAX_RECV_PER_POLL.get()
@@ -377,56 +376,6 @@ class Scheduler(
         self.grammar_manager = GrammarManager(self)
 
         self.is_initializing = False
-
-    def _register_draft_kv_pool_for_hicache(self, server_args):
-        """Register draft model KV pool with HiCache for EAGLE speculative decoding"""
-        from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, MLATokenToKVPool
-        from sglang.srt.mem_cache.memory_pool_host import (
-            MHATokenToKVPoolHost,
-            MLATokenToKVPoolHost,
-        )
-
-        # Get draft model's KV cache pool
-        if self.enable_overlap:
-            if self.server_args.enable_multi_layer_eagle:
-                draft_runner = self.draft_worker.draft_worker.draft_runner_list[0]
-            else:
-                draft_runner = self.draft_worker.draft_worker.draft_runner
-        else:
-            draft_runner = self.draft_worker.draft_model_runner
-
-        draft_kv_pool = draft_runner.token_to_kv_pool
-        # Create host KV cache pool for draft model
-        if isinstance(draft_kv_pool, MHATokenToKVPool):
-            draft_host_kv_pool = MHATokenToKVPoolHost(
-                draft_kv_pool,
-                server_args.hicache_ratio,
-                server_args.hicache_size,
-                self.page_size,
-                server_args.hicache_mem_layout,
-            )
-        elif isinstance(draft_kv_pool, MLATokenToKVPool):
-            draft_host_kv_pool = MLATokenToKVPoolHost(
-                draft_kv_pool,
-                server_args.hicache_ratio,
-                server_args.hicache_size,
-                self.page_size,
-                server_args.hicache_mem_layout,
-            )
-        else:
-            logger.warning(
-                f"Draft KV pool type {type(draft_kv_pool).__name__} not supported for HiCache, "
-                "draft model KV cache will not be backed up/restored"
-            )
-            return
-
-        # Register with HiCacheController
-        self.tree_cache.cache_controller.set_draft_kv_pool(
-            draft_kv_pool, draft_host_kv_pool
-        )
-        logger.info(
-            f"Registered draft model KV pool ({type(draft_kv_pool).__name__}) with HiCache"
-        )
 
     def init_model_config(self):
         self.model_config = ModelConfig.from_server_args(self.server_args)
@@ -704,10 +653,6 @@ class Scheduler(
                 self.tp_worker.register_hicache_layer_transfer_counter(
                     self.tree_cache.cache_controller.layer_done_counter
                 )
-
-                # Register draft model KV pool for EAGLE speculative decoding
-                if self.spec_algorithm.is_eagle():
-                    self._register_draft_kv_pool_for_hicache(server_args)
             elif self.is_hybrid_swa:
                 from sglang.srt.mem_cache.swa_radix_cache import SWARadixCache
 
@@ -1503,12 +1448,6 @@ class Scheduler(
 
             if self.disaggregation_mode != DisaggregationMode.NULL:
                 # Invalid request for disaggregated mode
-                if (
-                    recv_req.bootstrap_room is None
-                    and self.server_args.disaggregation_decode_enable_fake_auto
-                ):
-                    recv_req.bootstrap_room = self.round_robin_counter
-                    self.round_robin_counter = self.round_robin_counter + 1
                 if recv_req.bootstrap_room is None:
                     error_msg = (
                         f"Invalid request: Disaggregated request received without "
@@ -1617,45 +1556,39 @@ class Scheduler(
     def _prefetch_kvcache(self, req: Req):
         if self.enable_hicache_storage:
             req.init_next_round_input(self.tree_cache)
-
+            
             # Get matched length from local cache
             matched_len = len(req.prefix_indices) + req.host_hit_length
             new_input_tokens = req.fill_ids[matched_len:]
-
+            
             # Debug: log entry and key variables
             logger.info(
                 f"[_prefetch_kvcache] rid={req.rid}, matched_len={matched_len}, "
                 f"new_input_len={len(new_input_tokens)}, last_node_backuped={req.last_node.backuped}, "
                 f"is_eagle={self.tree_cache.is_eagle}"
             )
-
+            
             # L3-first query takes priority when local cache is empty (matched_len=0)
             # This is because root_node.backuped is always True, so we need to check matched_len first
             if matched_len == 0 and len(new_input_tokens) > 0:
                 # L3-first query: local cache is empty, try to fetch from L3 storage
                 # This enables cross-worker L3 cache sharing
                 logger.info(f"[_prefetch_kvcache] Taking L3-FIRST path (matched_len=0)")
-
+                
                 # Convert to bigram keys for EAGLE mode (must match cache insert format)
                 if self.tree_cache.is_eagle:
                     tokens_for_l3 = convert_to_bigram_key(new_input_tokens)
-                    logger.info(
-                        f"[_prefetch_kvcache] EAGLE bigram conversion: input_len={len(new_input_tokens)}, output_len={len(tokens_for_l3)}"
-                    )
+                    logger.info(f"[_prefetch_kvcache] EAGLE bigram conversion: input_len={len(new_input_tokens)}, output_len={len(tokens_for_l3)}")
                 else:
                     tokens_for_l3 = new_input_tokens
-
+                
                 # Debug: log L3-First query details
-                first_page_tokens = (
-                    list(zip(tokens_for_l3[:10], tokens_for_l3[1:11]))
-                    if len(tokens_for_l3) > 1
-                    else []
-                )
+                first_page_tokens = list(zip(tokens_for_l3[:10], tokens_for_l3[1:11])) if len(tokens_for_l3) > 1 else []
                 logger.info(
                     f"[L3-First] Request {req.rid}: local cache empty, tokens={len(tokens_for_l3)}, "
                     f"is_eagle={self.tree_cache.is_eagle}, first_page_tokens={first_page_tokens}..."
                 )
-
+                
                 # Start from root node with no prior hash
                 self.tree_cache.prefetch_from_storage(
                     req.rid,

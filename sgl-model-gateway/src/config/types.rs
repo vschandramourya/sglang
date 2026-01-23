@@ -325,6 +325,10 @@ pub enum RoutingMode {
         /// This is useful when the request appends a large amount of new text (e.g., 10k+) and should still be treated as cold.
         #[serde(default = "default_pre_prefill_unmatched_chars_threshold")]
         pre_prefill_unmatched_chars_threshold: usize,
+        /// Minimum input token count for pre-prefill routing.
+        /// Requests with fewer tokens than this will skip pre-prefill and use normal routing.
+        #[serde(default = "default_pre_prefill_min_tokens")]
+        pre_prefill_min_tokens: usize,
     },
     #[serde(rename = "openai")]
     OpenAI { worker_urls: Vec<String> },
@@ -336,6 +340,10 @@ pub fn default_pre_prefill_match_threshold() -> f32 {
 
 pub fn default_pre_prefill_unmatched_chars_threshold() -> usize {
     10000 // Requests with >= 10k unmatched chars are considered "cold"
+}
+
+pub fn default_pre_prefill_min_tokens() -> usize {
+    10000 // Skip pre-prefill for requests with < 10k tokens
 }
 
 impl RoutingMode {
