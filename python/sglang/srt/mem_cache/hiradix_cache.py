@@ -267,7 +267,16 @@ class HiRadixCache(RadixCache):
 
         return len(host_indices)
 
-    def write_backup_storage(self, node: TreeNode):
+    def write_backup_storage(self, node: TreeNode, on_eviction: bool = False):
+        # In write_back mode, only write to L3 during eviction (true write-back behavior)
+        # Skip if already backed up to L3 storage
+        if node.storage_backuped:
+            return
+            
+        # In write_back mode, skip normal writes but allow eviction-triggered writes
+        if self.cache_controller.write_policy == "write_back" and not on_eviction:
+            return
+            
         prefix_keys = (
             node.get_prefix_hash_values(node.parent)
             if self.hicache_storage_pass_prefix_keys
@@ -416,6 +425,10 @@ class HiRadixCache(RadixCache):
         ]
         heapq.heapify(eviction_heap)
 
+        # For write_back mode, collect nodes that need L3 backup before eviction
+        write_back_mode = self.cache_controller.write_policy == "write_back"
+        nodes_pending_l3_backup = []
+
         num_evicted = 0
         while num_evicted < num_tokens and len(eviction_heap):
             _priority, x = heapq.heappop(eviction_heap)
@@ -429,15 +442,50 @@ class HiRadixCache(RadixCache):
             if x.host_ref_counter > 0:
                 continue
 
-            num_evicted += self.cache_controller.evict_host(x.host_value)
+            # In write_back mode, write to L3 before evicting from host (true write-back)
+            if write_back_mode and self.enable_storage and not x.storage_backuped:
+                self.write_backup_storage(x, on_eviction=True)
+                nodes_pending_l3_backup.append(x)
+                num_evicted += len(x.host_value)
+            else:
+                num_evicted += self.cache_controller.evict_host(x.host_value)
+                key = self.get_child_key_fn(x.key)
+                v = x.parent.children.pop(key, None)
+                assert v == x, f"parent does not have child key, {key}"
 
-            key = self.get_child_key_fn(x.key)
-            v = x.parent.children.pop(key, None)
-            assert v == x, f"parent does not have child key, {key}"
+                if len(x.parent.children) == 0 and x.parent.evicted:
+                    new_priority = self.eviction_strategy.get_priority(x.parent)
+                    heapq.heappush(eviction_heap, (new_priority, x.parent))
 
-            if len(x.parent.children) == 0 and x.parent.evicted:
-                new_priority = self.eviction_strategy.get_priority(x.parent)
-                heapq.heappush(eviction_heap, (new_priority, x.parent))
+        # Wait for L3 backups to complete, then free host memory
+        if nodes_pending_l3_backup:
+            self._wait_and_evict_l3_backed_nodes(nodes_pending_l3_backup)
+
+    def _wait_and_evict_l3_backed_nodes(self, nodes: List[TreeNode]):
+        """Wait for L3 backup to complete and then free host memory."""
+        cc = self.cache_controller
+        
+        # Wait for all pending backups to complete
+        pending_ids = set(self.ongoing_backup.keys())
+        while pending_ids:
+            try:
+                operation = cc.ack_backup_queue.get(timeout=1.0)
+                ack_id = operation.id
+                entry = self.ongoing_backup.pop(ack_id, None)
+                if entry is not None:
+                    entry.release_host()
+                    entry.storage_backuped = True
+                pending_ids.discard(ack_id)
+            except:
+                # Check if any pending backups completed
+                pass
+
+        # Now free host memory for all nodes
+        for node in nodes:
+            self.cache_controller.evict_host(node.host_value)
+            key = self.get_child_key_fn(node.key)
+            v = node.parent.children.pop(key, None)
+            assert v == node, f"parent does not have child key, {key}"
 
     def load_back(
         self, node: TreeNode, mem_quota: Optional[int] = None
@@ -576,6 +624,8 @@ class HiRadixCache(RadixCache):
             entry = self.ongoing_backup.pop(ack_id, None)
             if entry is not None:
                 entry.release_host()
+                # Mark node as backed up to L3 storage
+                entry.storage_backuped = True
             if self.enable_storage_metrics:
                 self.storage_metrics_collector.log_backuped_tokens(
                     operation.completed_tokens
