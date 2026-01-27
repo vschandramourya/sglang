@@ -1,5 +1,5 @@
 x-pd-common: &pd-common
-  image: ${PD_IMAGE:-598726163780.dkr.ecr.us-west-2.amazonaws.com/tgl:vmain-20251210-40fdfc862}
+  image: ${PD_IMAGE:-598726163780.dkr.ecr.us-west-2.amazonaws.com/tgl-test:ngc2510-pd-development-c1803b0-nixl-fix}
   ipc: host
   network_mode: host
   pid: host

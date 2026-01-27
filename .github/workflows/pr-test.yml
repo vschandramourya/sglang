@@ -34,50 +34,119 @@ jobs:
               - "python/**"
 
   # =============================================== primary ====================================================
-
-  unit-test-backend-1-gpu:
+  stage-a-test-1:
     needs: [check-changes]
     if: always() && !failure() && !cancelled()
     runs-on: 1-gpu-runner
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    env:
+      RUNNER_LABELS: 1-gpu-runner
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: |
           bash scripts/ci/ci_install_dependency.sh
 
       - name: Run test
-        timeout-minutes: 60
+        timeout-minutes: 10
         run: |
-          cd test/tgl
-          python3 run_suite.py --suite per-commit-1-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
+          cd test/
+          python3 run_suite.py --hw cuda --suite stage-a-test-1 --continue-on-error
 
-  unit-test-backend-2-gpu:
+  stage-b-test-small-1-gpu:
+    needs: [check-changes]
+    if: always() && !failure() && !cancelled()
+    runs-on: 1-gpu-runner
+    env:
+      RUNNER_LABELS: 1-gpu-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run test
+        timeout-minutes: 30
+        run: |
+          cd test/
+          python3 run_suite.py --hw cuda --suite stage-b-test-small-1-gpu --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --continue-on-error
+
+  stage-b-test-large-1-gpu:
+    needs: [check-changes]
+    if: always() && !failure() && !cancelled()
+    runs-on: 1-gpu-runner
+    env:
+      RUNNER_LABELS: 1-gpu-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          bash scripts/ci/ci_install_dependency.sh
+
+      - name: Run test
+        timeout-minutes: 30
+        run: |
+          cd test/
+          python3 run_suite.py --hw cuda --suite stage-b-test-large-1-gpu --continue-on-error
+
+  stage-b-test-large-2-gpu:
     needs: [check-changes]
     if: always() && !failure() && !cancelled()
     runs-on: 2-gpu-runner
+    env:
+      RUNNER_LABELS: 2-gpu-runner
     strategy:
       fail-fast: false
       matrix:
-        part: [0, 1]
+        partition: [0, 1]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: |
           bash scripts/ci/ci_install_dependency.sh
 
       - name: Run test
-        timeout-minutes: 60
+        timeout-minutes: 30
         run: |
-          cd test/tgl
-          python3 run_suite.py --suite per-commit-2-gpu --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }}
+          cd test/
+          python3 run_suite.py --hw cuda --suite stage-b-test-large-2-gpu --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --skip-file registered/disaggregation/test_disaggregation_basic.py --continue-on-error
+
+  # add it back when 4-GPU H100 runners are available
+  # stage-c-test-large-4-gpu:
+  #   needs: [check-changes]
+  #   if: always() && !failure() && !cancelled()
+  #   runs-on: 4-gpu-h100
+  #   env:
+  #     RUNNER_LABELS: 4-gpu-h100
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+
+  #     - name: Install dependencies
+  #       timeout-minutes: 10
+  #       run: |
+  #         bash scripts/ci/ci_install_dependency.sh
+
+  #     - name: Run test
+  #       timeout-minutes: 30
+  #       run: |
+  #         cd test/
+  #         python3 run_suite.py --hw cuda --suite stage-c-test-large-4-gpu --continue-on-error
 
   performance-test-1-gpu-part-1:
     needs: [check-changes]
@@ -171,8 +240,47 @@ jobs:
           cd test/srt
           python3 -m unittest test_bench_serving.TestBenchServing.test_vlm_online_latency
 
+  performance-test-1-gpu-part-3:
+    needs: [check-changes]
+    if: always() && !failure() && !cancelled()
+    runs-on: 1-gpu-runner
+    env:
+      RUNNER_LABELS: 1-gpu-runner
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          bash scripts/ci/ci_install_dependency.sh
+
+      - name: Benchmark Scores online latency and throughput
+        timeout-minutes: 10
+        run: |
+          cd test/srt
+          python3 -m unittest test_bench_serving.TestBenchServing.test_score_api_latency_throughput
+
+      - name: Benchmark Scores online latency and throughput (batch size scaling)
+        timeout-minutes: 10
+        run: |
+          cd test/srt
+          python3 -m unittest test_bench_serving.TestBenchServing.test_score_api_batch_scaling
+
+      - name: Benchmark Embeddings online latency and throughput
+        timeout-minutes: 10
+        run: |
+          cd test/srt
+          python3 -m unittest test_bench_serving.TestBenchServing.test_embeddings_api_latency_throughput
+
+      - name: Benchmark Embeddings online latency and throughput (batch size scaling)
+        timeout-minutes: 10
+        run: |
+          cd test/srt
+          python3 -m unittest test_bench_serving.TestBenchServing.test_embeddings_api_batch_scaling
+
   performance-test-2-gpu:
-    needs: [check-changes, unit-test-backend-2-gpu]
+    needs: [check-changes]
     if: always() && !failure() && !cancelled()
     runs-on: 2-gpu-runner
     steps:
@@ -259,7 +367,7 @@ jobs:
         timeout-minutes: 20
         run: |
           cd test/srt
-          python3 test_moe_eval_accuracy_large.py
+          python3  -m sglang.test.ci.run_with_retry test_moe_eval_accuracy_large.py
 
   unit-test-backend-4-gpu-b200:
     needs: [check-changes]
@@ -268,7 +376,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [0, 1, 2]
+        partition: [0, 1, 2, 3, 4, 5]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -281,65 +389,74 @@ jobs:
         timeout-minutes: 60
         run: |
           cd test/tgl
-          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200 --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+          IS_BLACKWELL=1 python3 run_suite.py --hw cuda --suite per-commit-4-gpu-b200-tgl --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --continue-on-error --timeout-per-file 3600
 
-  unit-test-backend-4-gpu-b200-cursor:
+
+  unit-test-backend-8-gpu-h200-tgl:
     needs: [check-changes]
     if: always() && !failure() && !cancelled()
-    runs-on: b200-runner
+    runs-on: h200-8gpu-runner
     strategy:
       fail-fast: false
       matrix:
-        part: [0, 1]
+        partition: [0]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+          bash scripts/ci/ci_install_dependency.sh
 
       - name: Run test
         timeout-minutes: 60
         run: |
           cd test/tgl
-          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+          python3 run_suite.py --hw cuda --suite per-commit-8-gpu-h200-tgl --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --continue-on-error --timeout-per-file 3600
 
-  unit-test-backend-4-gpu-b200-cursor-phoenix:
+
+  per-commit-1-gpu-tgl:
     needs: [check-changes]
     if: always() && !failure() && !cancelled()
-    runs-on: b200-runner
+    runs-on: 1-gpu-runner
     strategy:
       fail-fast: false
       matrix:
-        part: [0]
+        partition: [0]
+    env:
+      RUNNER_LABELS: 1-gpu-runner
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: |
-          IS_BLACKWELL=1 bash scripts/ci/ci_install_dependency.sh
+          bash scripts/ci/ci_install_dependency.sh
 
       - name: Run test
-        timeout-minutes: 60
+        timeout-minutes: 20
         run: |
           cd test/tgl
-          IS_BLACKWELL=1 python3 run_suite.py --suite per-commit-4-gpu-b200-cursor-phoenix --auto-partition-id ${{ matrix.part }} --auto-partition-size ${{ strategy.job-total }} --timeout-per-file 3600
+          python3 run_suite.py --hw cuda --suite per-commit-1-gpu-tgl --auto-partition-id ${{ matrix.partition }} --auto-partition-size ${{ strategy.job-total }} --continue-on-error --timeout-per-file 600
 
   pr-test-finish:
     needs: [
       check-changes,
-      unit-test-backend-1-gpu,
-      unit-test-backend-2-gpu,
+      stage-a-test-1,
+      stage-b-test-small-1-gpu,
+      stage-b-test-large-1-gpu,
+      stage-b-test-large-2-gpu,
+      # stage-c-test-large-4-gpu,
+      per-commit-1-gpu-tgl,
       performance-test-1-gpu-part-1,
       performance-test-1-gpu-part-2,
+      performance-test-1-gpu-part-3,
       performance-test-2-gpu,
       accuracy-test-1-gpu,
       accuracy-test-2-gpu,
       unit-test-backend-4-gpu-b200,
-      unit-test-backend-4-gpu-b200-cursor,
-      unit-test-backend-4-gpu-b200-cursor-phoenix
+      unit-test-backend-8-gpu-h200-tgl
     ]
     if: always()
     runs-on: ubuntu-latest

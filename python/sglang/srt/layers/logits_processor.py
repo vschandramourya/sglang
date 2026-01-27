@@ -15,8 +15,9 @@
 
 import dataclasses
 import logging
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import os
 import torch
 import triton
 import triton.language as tl
@@ -60,6 +61,7 @@ from sglang.srt.utils import is_npu, use_intel_amx_backend
 logger = logging.getLogger(__name__)
 
 _is_npu = is_npu()
+load_shared = int(os.environ.get("SGL_DS3_LOAD_SHARE_NORM", "0"))
 
 
 @dataclasses.dataclass
@@ -100,6 +102,9 @@ class LogitsProcessorOutput:
 
     ## Part 4: Diffusion LLM only.
     full_logits: Optional[torch.Tensor] = None
+
+    ## Part 5: Customized Info
+    customized_info: Optional[Dict[str, List[Any]]] = None
 
 
 @dataclasses.dataclass
@@ -377,6 +382,7 @@ class LogitsProcessor(nn.Module):
         self,
         input_ids,
         hidden_states,
+        residual,
         lm_head: VocabParallelEmbedding,
         logits_metadata: Union[LogitsMetadata, ForwardBatch],
         aux_hidden_states: Optional[torch.Tensor] = None,
@@ -535,8 +541,12 @@ class LogitsProcessor(nn.Module):
                     aux_hidden_states = torch.cat(aux_hidden_states, dim=-1)
                     hidden_states_to_store = aux_hidden_states
                 else:
-                    hidden_states_to_store = hidden_states
-                hidden_states_to_store_before_norm = hidden_states_before_norm
+                    if load_shared:
+                        hidden_states_to_store = residual
+                    else:
+                        hidden_states_to_store = hidden_states
+                        hidden_states_to_store_before_norm = hidden_states_before_norm
+                    
             elif logits_metadata.capture_hidden_mode.is_last():
                 # Get the last token hidden states. If sample_indices is None,
                 # pruned states only contain the last tokens already.

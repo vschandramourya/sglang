@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 class HiRadixCache(RadixCache):
 
     def __init__(self, params: CacheInitParams, server_args: ServerArgs):
+        logger.info(
+            f"[HiRadixCache] Initializing HiRadixCache: "
+            f"write_policy={server_args.hicache_write_policy}, "
+            f"storage_backend={server_args.hicache_storage_backend}, "
+            f"io_backend={server_args.hicache_io_backend}, "
+            f"mem_layout={server_args.hicache_mem_layout}"
+        )
         if server_args.hicache_io_backend == "direct":
             # FIXME: move this logic into server_args parsing
             if server_args.hicache_mem_layout == "page_first":
@@ -68,6 +75,8 @@ class HiRadixCache(RadixCache):
 
         self.tp_group = params.tp_cache_group
         self.tp_world_size = torch.distributed.get_world_size(group=self.tp_group)
+        self.pp_rank = params.pp_rank
+        self.pp_size = params.pp_size
         self.enable_storage = server_args.hicache_storage_backend is not None
         self.enable_storage_metrics = self.enable_storage and params.enable_metrics
 
@@ -103,6 +112,12 @@ class HiRadixCache(RadixCache):
             prefetch_threshold=self.prefetch_threshold,
             model_name=server_args.served_model_name,
             storage_backend_extra_config=extra_config,
+            pp_rank=self.pp_rank,
+            pp_size=self.pp_size,
+        )
+        logger.info(
+            f"[HiRadixCache] CacheController initialized: enable_storage={self.cache_controller.enable_storage}, "
+            f"write_policy={self.cache_controller.write_policy}"
         )
         if self.enable_storage_metrics:
             # TODO: support pp
@@ -110,6 +125,8 @@ class HiRadixCache(RadixCache):
                 "storage_backend": server_args.hicache_storage_backend,
                 "tp_rank": self.cache_controller.tp_rank,
                 "dp_rank": self.cache_controller.dp_rank,
+                "pp_rank": self.cache_controller.pp_rank,
+                "pp_size": self.cache_controller.pp_size,
             }
             self.storage_metrics_collector = StorageMetricsCollector(labels=labels)
 
@@ -125,6 +142,10 @@ class HiRadixCache(RadixCache):
             1 if server_args.hicache_write_policy == "write_through" else 2
         )
         self.load_back_threshold = 10
+        logger.info(
+            f"[HiRadixCache] write_through_threshold={self.write_through_threshold} "
+            f"(policy={server_args.hicache_write_policy})"
+        )
 
         super().__init__(params=params)
 
@@ -215,11 +236,16 @@ class HiRadixCache(RadixCache):
             return False
 
     def write_backup(self, node: TreeNode, write_back=False):
+        logger.debug(
+            f"[HiRadixCache] write_backup START: node_id={node.id}, "
+            f"value_len={len(node.value) if node.value is not None else 0}, write_back={write_back}"
+        )
         host_indices = self.cache_controller.write(
             device_indices=node.value,
             node_id=node.id,
         )
         if host_indices is None:
+            logger.warning(f"[HiRadixCache] write_backup: host alloc failed for node_id={node.id}, evicting...")
             self.evict_host(len(node.value))
             host_indices = self.cache_controller.write(
                 device_indices=node.value,
@@ -232,12 +258,25 @@ class HiRadixCache(RadixCache):
             if not write_back:
                 # no need to lock nodes if write back
                 self.inc_lock_ref(node)
+            logger.debug(
+                f"[HiRadixCache] write_backup SUCCESS: node_id={node.id}, host_indices_len={len(host_indices)}"
+            )
         else:
+            logger.error(f"[HiRadixCache] write_backup FAILED: node_id={node.id}, could not allocate host memory")
             return 0
 
         return len(host_indices)
 
-    def write_backup_storage(self, node: TreeNode):
+    def write_backup_storage(self, node: TreeNode, on_eviction: bool = False):
+        # In write_back mode, only write to L3 during eviction (true write-back behavior)
+        # Skip if already backed up to L3 storage
+        if node.storage_backuped:
+            return
+            
+        # In write_back mode, skip normal writes but allow eviction-triggered writes
+        if self.cache_controller.write_policy == "write_back" and not on_eviction:
+            return
+            
         prefix_keys = (
             node.get_prefix_hash_values(node.parent)
             if self.hicache_storage_pass_prefix_keys
@@ -386,6 +425,10 @@ class HiRadixCache(RadixCache):
         ]
         heapq.heapify(eviction_heap)
 
+        # For write_back mode, collect nodes that need L3 backup before eviction
+        write_back_mode = self.cache_controller.write_policy == "write_back"
+        nodes_pending_l3_backup = []
+
         num_evicted = 0
         while num_evicted < num_tokens and len(eviction_heap):
             _priority, x = heapq.heappop(eviction_heap)
@@ -399,15 +442,50 @@ class HiRadixCache(RadixCache):
             if x.host_ref_counter > 0:
                 continue
 
-            num_evicted += self.cache_controller.evict_host(x.host_value)
+            # In write_back mode, write to L3 before evicting from host (true write-back)
+            if write_back_mode and self.enable_storage and not x.storage_backuped:
+                self.write_backup_storage(x, on_eviction=True)
+                nodes_pending_l3_backup.append(x)
+                num_evicted += len(x.host_value)
+            else:
+                num_evicted += self.cache_controller.evict_host(x.host_value)
+                key = self.get_child_key_fn(x.key)
+                v = x.parent.children.pop(key, None)
+                assert v == x, f"parent does not have child key, {key}"
 
-            key = self.get_child_key_fn(x.key)
-            v = x.parent.children.pop(key, None)
-            assert v == x, f"parent does not have child key, {key}"
+                if len(x.parent.children) == 0 and x.parent.evicted:
+                    new_priority = self.eviction_strategy.get_priority(x.parent)
+                    heapq.heappush(eviction_heap, (new_priority, x.parent))
 
-            if len(x.parent.children) == 0 and x.parent.evicted:
-                new_priority = self.eviction_strategy.get_priority(x.parent)
-                heapq.heappush(eviction_heap, (new_priority, x.parent))
+        # Wait for L3 backups to complete, then free host memory
+        if nodes_pending_l3_backup:
+            self._wait_and_evict_l3_backed_nodes(nodes_pending_l3_backup)
+
+    def _wait_and_evict_l3_backed_nodes(self, nodes: List[TreeNode]):
+        """Wait for L3 backup to complete and then free host memory."""
+        cc = self.cache_controller
+        
+        # Wait for all pending backups to complete
+        pending_ids = set(self.ongoing_backup.keys())
+        while pending_ids:
+            try:
+                operation = cc.ack_backup_queue.get(timeout=1.0)
+                ack_id = operation.id
+                entry = self.ongoing_backup.pop(ack_id, None)
+                if entry is not None:
+                    entry.release_host()
+                    entry.storage_backuped = True
+                pending_ids.discard(ack_id)
+            except:
+                # Check if any pending backups completed
+                pass
+
+        # Now free host memory for all nodes
+        for node in nodes:
+            self.cache_controller.evict_host(node.host_value)
+            key = self.get_child_key_fn(node.key)
+            v = node.parent.children.pop(key, None)
+            assert v == node, f"parent does not have child key, {key}"
 
     def load_back(
         self, node: TreeNode, mem_quota: Optional[int] = None
@@ -546,6 +624,8 @@ class HiRadixCache(RadixCache):
             entry = self.ongoing_backup.pop(ack_id, None)
             if entry is not None:
                 entry.release_host()
+                # Mark node as backed up to L3 storage
+                entry.storage_backuped = True
             if self.enable_storage_metrics:
                 self.storage_metrics_collector.log_backuped_tokens(
                     operation.completed_tokens
@@ -617,6 +697,9 @@ class HiRadixCache(RadixCache):
         last_host_node, token_ids, host_indices, operation = self.ongoing_prefetch[
             req_id
         ]
+        
+        # Check if this is an L3-first prefetch (from root node)
+        is_l3_first = (last_host_node == self.root_node)
 
         if operation.host_indices is None:
             # prefetch has not been issued due to insufficient host memory
@@ -712,16 +795,36 @@ class HiRadixCache(RadixCache):
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
     ):
+        # Determine if this is an L3-first query (starting from root with no prior hash)
+        is_l3_first = (last_hash is None and last_host_node == self.root_node)
+        
         # align the number of fetching tokens to the page size
         prefetch_length = len(new_input_tokens) - (
             len(new_input_tokens) % self.page_size
         )
         new_input_tokens = new_input_tokens[:prefetch_length]
+        
+        # For L3-first queries, use a lower threshold since any L3 hit saves computation
+        # The minimum is 1 page (page_size tokens)
+        effective_threshold = self.page_size if is_l3_first else self.prefetch_threshold
+        
+        # Debug: log prefetch conditions
+        rate_limited = self.cache_controller.prefetch_rate_limited() if self.enable_storage else False
+        logger.info(
+            f"[L3-First] prefetch_from_storage: req_id={req_id}, is_l3_first={is_l3_first}, "
+            f"enable_storage={self.enable_storage}, prefetch_length={prefetch_length}, "
+            f"effective_threshold={effective_threshold}, rate_limited={rate_limited}"
+        )
+        
         if (
             not self.enable_storage
-            or prefetch_length < self.prefetch_threshold
+            or prefetch_length < effective_threshold
             or self.cache_controller.prefetch_rate_limited()
         ):
+            skip_reason = "enable_storage=False" if not self.enable_storage else \
+                          f"prefetch_length({prefetch_length}) < threshold({effective_threshold})" if prefetch_length < effective_threshold else \
+                          "rate_limited"
+            logger.info(f"[L3-First] Prefetch SKIPPED for {req_id}: {skip_reason}")
             return
 
         last_host_node.protect_host()
@@ -899,7 +1002,20 @@ class HiRadixCache(RadixCache):
 
             # Compute hash_value if storage is enabled
             if self.enable_storage:
-                new_node.hash_value = compute_node_hash_values(new_node, self.page_size)
+                last_hash = node.get_last_hash_value()
+                assert (node == self.root_node) or (
+                    last_hash is not None
+                ), "Parent node must have a hash value with storage enabled"
+                new_node.hash_value = []
+                
+                for idx in range(0, len(key), self.page_size):
+                    new_node.hash_value.append(
+                        self.cache_controller.get_hash_str(
+                            key.token_ids[idx : idx + self.page_size],
+                            prior_hash=last_hash,
+                        )
+                    )
+                    last_hash = new_node.hash_value[-1]
 
             if self.cache_controller.write_policy != "write_back":
                 self._inc_hit_count(new_node, chunked)

@@ -17,7 +17,7 @@ python3 -m sglang.launch_server \
   --trust-remote-code \
   --quantization modelopt_fp4 \
   --fp4-gemm-backend sglang \
-  --tp 4 \
+  --tp 8 \
   --attention-backend trtllm_mla \
   --moe-runner-backend flashinfer_trtllm \
   --speculative-algorithm EAGLE \
@@ -39,4 +39,5 @@ python3 -m sglang.launch_server \
   --log-requests \
   --log-requests-level 0 \
   --enable-cache-report \
+  --pp-size 2 \
   --enable-inc-tokenizer

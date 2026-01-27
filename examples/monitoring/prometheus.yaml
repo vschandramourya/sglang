@@ -1,10 +1,12 @@
 # prometheus.yaml
 global:
-  scrape_interval: 5s
-  evaluation_interval: 30s
+  scrape_interval: 1s
+  evaluation_interval: 5s
 
 scrape_configs:
   - job_name: sglang
     static_configs:
       - targets:
-          - '127.0.0.1:30000'
+          - 'http://10.168.9.72:12347'
+          - 'http://10.168.9.70:12347'
+          - 'http://10.168.9.72:12348'

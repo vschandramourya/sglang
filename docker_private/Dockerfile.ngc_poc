@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1.6
+FROM nvcr.io/nvidia/pytorch:25.10-py3
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
+    ssh-keyscan github.com >> /root/.ssh/known_hosts
+
+COPY ./sgl_kernel-0.3.21-cp310-abi3-linux_x86_64.whl /tmp/sgl_kernel-0.3.21-cp310-abi3-linux_x86_64.whl
+
+RUN --mount=type=ssh \
+    set -eux; \
+    mkdir -p /sgl-workspace; \
+    cd /sgl-workspace; \
+    GIT_SSH_COMMAND="ssh -o BatchMode=yes" \
+      git ls-remote git@github.com:togethercomputer/tgl.git >/dev/null; \
+    git clone -b pd-development git@github.com:togethercomputer/tgl.git sglang; \
+    cd sglang; \
+    sed -i \
+        -e '/"sgl-kernel==0.3.20",/d' \
+        -e '/"torch==2.9.1",/d' \
+        -e '/"torchaudio==2.9.1",/d' \
+        python/pyproject.toml; \
+    pip install --no-cache-dir -e python; \
+    cd tgl-kernel && pip install --no-cache-dir .; \
+    pip install --no-cache-dir /tmp/sgl_kernel-0.3.21-cp310-abi3-linux_x86_64.whl; \
+    pip install --no-cache-dir flashinfer-jit-cache==0.5.3 --index-url https://flashinfer.ai/whl/cu130
+
+WORKDIR /sgl-workspace/
+
+RUN set -eux; \
+    rm -rf /usr/local/ucx/; \
+    git clone -b v1.20.x --depth=1 https://github.com/openucx/ucx.git; \
+    cd ucx; \
+    ./autogen.sh; \
+    ./contrib/configure-release         \
+        --prefix=/usr/local/ucx/        \
+        --enable-shared                 \
+        --disable-static                \
+        --disable-doxygen-doc           \
+        --enable-optimizations          \
+        --enable-cma                    \
+        --enable-devel-headers          \
+        --with-cuda=/usr/local/cuda     \
+        --with-verbs                    \
+        --with-dm                       \
+        --enable-mt;                    \
+    make install -j$(nproc)
+
+RUN pip install --no-cache-dir nixl[cu13]
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        net-tools && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /sgl-workspace/sglang/

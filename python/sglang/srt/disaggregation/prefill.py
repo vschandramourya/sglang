@@ -49,11 +49,8 @@ from sglang.srt.managers.schedule_batch import (
     ScheduleBatch,
 )
 from sglang.srt.mem_cache.common import release_kv_cache
-from sglang.srt.mem_cache.memory_pool import (
-    HybridLinearKVPool,
-    NSATokenToKVPool,
-    SWAKVPool,
-)
+from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool, NSATokenToKVPool
+from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
 from sglang.srt.tracing.trace import trace_event_batch, trace_slice, trace_slice_end
 
 if TYPE_CHECKING:
@@ -276,6 +273,9 @@ class PrefillBootstrapQueue:
                 failed_reqs.append(req)
                 if self.scheduler.enable_metrics:
                     self.scheduler.metrics_collector.increment_bootstrap_failed_reqs()
+                if self.scheduler.enable_hicache_storage:
+                    # to release prefetch events associated with the request
+                    self.scheduler.tree_cache.release_aborted_request(req.rid)
                 continue
 
             # KV.WaitingForInput - init here
@@ -355,6 +355,10 @@ class SchedulerDisaggregationPrefillMixin:
             else:
                 self.self_check_during_idle()
 
+            # Check hierarchical cache events to process pending L3 writes
+            if self.enable_hierarchical_cache:
+                self.tree_cache.check_hicache_events()
+
             self.process_disagg_prefill_inflight_queue()
 
             # Update last_batch
@@ -390,6 +394,10 @@ class SchedulerDisaggregationPrefillMixin:
             elif batch is None:
                 # When the server is idle, do self-check and re-init some states
                 self.self_check_during_idle()
+
+            # Check hierarchical cache events to process pending L3 writes
+            if self.enable_hierarchical_cache:
+                self.tree_cache.check_hicache_events()
 
             self.process_disagg_prefill_inflight_queue()
 
@@ -603,7 +611,7 @@ class SchedulerDisaggregationPrefillMixin:
         """
         polls = poll_and_all_reduce(
             [req.disagg_kv_sender for req in self.disagg_prefill_inflight_queue],
-            self.tp_worker.get_attention_tp_cpu_group(),
+            self.attn_tp_cpu_group,
         )
 
         transferred_rids: List[str] = []

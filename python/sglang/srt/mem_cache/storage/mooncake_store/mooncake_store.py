@@ -274,8 +274,8 @@ class MooncakeStore(HiCacheStorage):
                 self.extra_backend_tag = extra_config["extra_backend_tag"]
                 logger.info(f"Using extra_backend_tag: {self.extra_backend_tag}")
 
-            # Check server status
-            if self.config.check_server:
+            # Check server status (only in Real Client mode, not Dummy Client)
+            if self.config.check_server and not self.config.standalone_storage:
                 self.check_server()
 
             # Handle JSON device_name configuration
@@ -330,9 +330,21 @@ class MooncakeStore(HiCacheStorage):
             if storage_config is not None:
                 self.is_mla_backend = storage_config.is_mla_model
                 self.local_rank = storage_config.tp_rank
+                self.pp_rank = storage_config.pp_rank
+                self.pp_size = storage_config.pp_size
             else:
                 self.is_mla_backend = False
                 self.local_rank = 0
+                self.pp_rank = 0
+                self.pp_size = 1
+
+            self.enable_pp = self.pp_size > 1
+            if self.enable_pp:
+                self.mha_suffix = f"{self.local_rank}_{self.pp_rank}"
+                self.mla_suffix = f"{self.pp_rank}"
+            else:
+                self.mha_suffix = f"{self.local_rank}"
+                self.mla_suffix = ""
 
         except ValueError as e:
             logger.error("Configuration loading failed: %s", e)
@@ -406,8 +418,8 @@ class MooncakeStore(HiCacheStorage):
         ptr_list, element_size_list = self.mem_pool_host.get_page_buffer_meta(indices)
         key_list = []
         for key_ in keys:
-            key_list.append(f"{key_}_{self.local_rank}_k")
-            key_list.append(f"{key_}_{self.local_rank}_v")
+            key_list.append(f"{key_}_{self.mha_suffix}_k")
+            key_list.append(f"{key_}_{self.mha_suffix}_v")
         assert len(key_list) == len(ptr_list)
         return key_list, ptr_list, element_size_list
 
@@ -415,7 +427,7 @@ class MooncakeStore(HiCacheStorage):
         ptr_list, element_size_list = self.mem_pool_host.get_page_buffer_meta(indices)
         key_list = []
         for key_ in keys:
-            key_list.append(f"{key_}_k")
+            key_list.append(f"{key_}_{self.mla_suffix}_k")
         assert len(key_list) == len(ptr_list)
         return key_list, ptr_list, element_size_list
 
@@ -471,6 +483,10 @@ class MooncakeStore(HiCacheStorage):
         host_indices: torch.Tensor,
         extra_info: Optional[HiCacheStorageExtraInfo] = None,
     ) -> List[bool]:
+        logger.info(
+            f"[MooncakeStore] batch_set_v1 START: keys_count={len(keys)}, "
+            f"first_keys={keys[:2] if keys else []}"
+        )
         # Apply extra_backend_tag prefix if available
         if self.extra_backend_tag is not None:
             prefix = self.extra_backend_tag
@@ -478,6 +494,9 @@ class MooncakeStore(HiCacheStorage):
 
         key_strs, buffer_ptrs, buffer_sizes = self._batch_preprocess(keys, host_indices)
         exist_result = self._batch_exist(key_strs)
+        logger.debug(
+            f"[MooncakeStore] batch_set_v1: exist_result={exist_result[:10] if len(exist_result) > 10 else exist_result}"
+        )
 
         set_keys = []
         set_buffer_ptrs = []
@@ -495,13 +514,28 @@ class MooncakeStore(HiCacheStorage):
 
         # Only set non-existing keys to storage
         if len(set_keys) > 0:
+            logger.info(
+                f"[MooncakeStore] batch_set_v1: WRITING {len(set_keys)} new keys to L3 storage"
+            )
             put_results = self._put_batch_zero_copy_impl(
                 set_keys, set_buffer_ptrs, set_buffer_sizes
             )
+            logger.info(
+                f"[MooncakeStore] batch_set_v1: put_results={put_results[:10] if len(put_results) > 10 else put_results}"
+            )
             for i in range(len(set_indices)):
                 set_results[set_indices[i]] = put_results[i]
+        else:
+            logger.info(
+                f"[MooncakeStore] batch_set_v1: all {len(keys)} keys already exist, skipping write"
+            )
 
-        return self._batch_postprocess(set_results, is_set_operate=True)
+        final_results = self._batch_postprocess(set_results, is_set_operate=True)
+        success_count = sum(final_results)
+        logger.info(
+            f"[MooncakeStore] batch_set_v1 DONE: success={success_count}/{len(final_results)}"
+        )
+        return final_results
 
     def set(
         self,
@@ -610,13 +644,13 @@ class MooncakeStore(HiCacheStorage):
         self, keys, extra_info: Optional[HiCacheStorageExtraInfo] = None
     ) -> int:
         if self.is_mla_backend:
-            query_keys = [f"{key}_k" for key in keys]
+            query_keys = [f"{key}_{self.mla_suffix}_k" for key in keys]
             key_multiplier = 1
         else:
             query_keys = []
             for key in keys:
-                query_keys.append(f"{key}_{self.local_rank}_k")
-                query_keys.append(f"{key}_{self.local_rank}_v")
+                query_keys.append(f"{key}_{self.mha_suffix}_k")
+                query_keys.append(f"{key}_{self.mha_suffix}_v")
             key_multiplier = 2
 
         exist_result = self._batch_exist(query_keys)

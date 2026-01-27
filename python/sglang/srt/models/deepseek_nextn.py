@@ -28,8 +28,8 @@ from sglang.srt.layers.attention.nsa.utils import (
     can_cp_split,
     cp_all_gather_rerange_output,
     cp_split_and_rebuild_data,
-    enable_prefill_cp,
     is_nsa_enable_prefill_cp,
+    nsa_use_prefill_cp,
     prepare_input_dp_with_cp_dsa,
 )
 from sglang.srt.layers.dp_attention import (
@@ -160,7 +160,7 @@ class DeepseekModelNextN(nn.Module):
                 )
             )
 
-        if enable_prefill_cp(forward_batch, self.nsa_enable_prefill_cp):
+        if nsa_use_prefill_cp(forward_batch, self.nsa_enable_prefill_cp):
             hidden_states = cp_split_and_rebuild_data(forward_batch, hidden_states)
         residual = None
         with get_global_expert_distribution_recorder().disable_this_region():
@@ -174,11 +174,11 @@ class DeepseekModelNextN(nn.Module):
 
         if not forward_batch.forward_mode.is_idle():
             if residual is not None:
-                hidden_states, _ = self.shared_head.norm(hidden_states, residual)
+                hidden_states, residual = self.shared_head.norm(hidden_states, residual)
             else:
                 hidden_states = self.shared_head.norm(hidden_states)
 
-            if enable_prefill_cp(forward_batch, self.nsa_enable_prefill_cp):
+            if nsa_use_prefill_cp(forward_batch, self.nsa_enable_prefill_cp):
                 # allgather + rerrange
                 hidden_states = cp_all_gather_rerange_output(
                     hidden_states,
@@ -187,6 +187,8 @@ class DeepseekModelNextN(nn.Module):
                     torch.cuda.current_stream(),
                 )
 
+        if residual is not None:
+            return hidden_states, residual
         return hidden_states
 
 
@@ -235,17 +237,16 @@ class DeepseekV3ForCausalLMNextN(DeepseekV3ForCausalLM):
     ) -> torch.Tensor:
         # TODO current just support prefill batch=1 and len(input_ids) > self.cp_size * 2
         if self.nsa_enable_prefill_cp:
-            cur_cp_seq_len = len(input_ids) // (self.cp_size * 2)
-            if can_cp_split(cur_cp_seq_len, self.cp_size, self.use_nsa, forward_batch):
+            if can_cp_split(len(input_ids), self.cp_size, self.use_nsa, forward_batch):
                 forward_batch.nsa_cp_metadata = prepare_input_dp_with_cp_dsa(
-                    torch.tensor(len(input_ids)),
+                    len(input_ids),
                     self.cp_rank,
                     self.cp_size,
                     forward_batch.seq_lens_cpu.tolist(),
                 )
-        hidden_states = self.model(input_ids, positions, forward_batch)
+        hidden_states, residual = self.model(input_ids, positions, forward_batch)
         return self.logits_processor(
-            input_ids, hidden_states, self.lm_head, forward_batch
+            input_ids, hidden_states, residual, self.lm_head, forward_batch
         )
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):

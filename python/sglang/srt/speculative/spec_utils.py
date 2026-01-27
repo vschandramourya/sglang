@@ -263,7 +263,7 @@ def generate_draft_decode_kv_indices(
     num_tokens_upper: tl.constexpr,
     page_size: tl.constexpr,
 ):
-    BLOCK_SIZE: tl.constexpr = 128
+    BLOCK_SIZE: tl.constexpr = 8192
     iters = tl.program_id(axis=0)
     bid = tl.program_id(axis=1)
     topk_id = tl.program_id(axis=2)

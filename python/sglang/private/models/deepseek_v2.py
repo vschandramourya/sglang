@@ -12,7 +12,14 @@ from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.utils import get_layer_id
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 from sglang.srt.model_loader.weight_utils import default_weight_loader
-from sglang.srt.models.deepseek_v2 import AttentionBackendRegistry, AttnForwardMethod
+from sglang.srt.models.deepseek_common.attention_backend_handler import (
+    AttentionBackendRegistry,
+    _dispatch_mla_subtype,
+    _get_sum_extend_prefix_lens,
+)
+from sglang.srt.models.deepseek_common.attention_forward_methods.forward_methods import (
+    AttnForwardMethod,
+)
 from sglang.srt.models.deepseek_v2 import (
     DeepseekV2AttentionMLA as SGLangDeepseekV2AttentionMLA,
 )
@@ -20,10 +27,6 @@ from sglang.srt.models.deepseek_v2 import (
     DeepseekV2ForCausalLM as SGLangDeepseekV2ForCausalLM,
 )
 from sglang.srt.models.deepseek_v2 import DeepseekV2Model as SGLangDeepseekV2Model
-from sglang.srt.models.deepseek_v2 import (
-    _dispatch_mla_subtype,
-    _get_sum_extend_prefix_lens,
-)
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import log_info_on_rank0
 
@@ -152,19 +155,23 @@ class DeepseekV2ForCausalLM(SGLangDeepseekV2ForCausalLM):
         input_embeds: torch.Tensor = None,
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
     ) -> torch.Tensor:
-        hidden_states = self.model(
+        hidden_states, residual = self.model(
             input_ids, positions, forward_batch, input_embeds, pp_proxy_tensors
         )
 
         aux_hidden_states = None
         if disable_normed_states:
-            hidden_states, residual = hidden_states
-            aux_hidden_states = [residual]
+            if isinstance(hidden_states, tuple):
+                hidden_states, residual = hidden_states
+                aux_hidden_states = [residual]
+            else:
+                aux_hidden_states = None
 
         if self.pp_group.is_last_rank:
             return self.logits_processor(
                 input_ids,
                 hidden_states,
+                residual,
                 self.lm_head,
                 forward_batch,
                 aux_hidden_states,

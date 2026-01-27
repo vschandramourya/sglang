@@ -1,6 +1,13 @@
-from typing import List, Optional
+import asyncio
+import copy
+from types import SimpleNamespace
+from typing import Awaitable, Callable, List, Optional
 
 from pydantic import BaseModel
+
+from sglang.bench_serving import run_benchmark
+from sglang.srt.utils import get_device
+from sglang.test.test_utils import DEFAULT_URL_FOR_TEST
 
 
 class ProfileLinks(BaseModel):
@@ -100,3 +107,144 @@ Note: To view the traces through perfetto-ui, please:
             relay_base = os.getenv("PERFETTO_RELAY_URL", "").rstrip("/")
             summary += result.to_markdown_row(trace_dir, base_url, relay_base)
         return summary
+
+
+def get_benchmark_args(
+    base_url="",
+    dataset_name="",
+    dataset_path="",
+    tokenizer="",
+    num_prompts=500,
+    sharegpt_output_len=None,
+    random_input_len=4096,
+    random_output_len=2048,
+    sharegpt_context_len=None,
+    request_rate=float("inf"),
+    disable_stream=False,
+    disable_ignore_eos=False,
+    seed: int = 0,
+    device="auto",
+    pd_separated: bool = False,
+    lora_name=None,
+    lora_request_distribution="uniform",
+    lora_zipf_alpha=1.5,
+    disable_tqdm=False,
+):
+    return SimpleNamespace(
+        backend="sglang",
+        base_url=base_url,
+        host=None,
+        port=None,
+        dataset_name=dataset_name,
+        dataset_path=dataset_path,
+        model=None,
+        tokenizer=tokenizer,
+        num_prompts=num_prompts,
+        sharegpt_output_len=sharegpt_output_len,
+        sharegpt_context_len=sharegpt_context_len,
+        random_input_len=random_input_len,
+        random_output_len=random_output_len,
+        random_range_ratio=0.0,
+        request_rate=request_rate,
+        multi=None,
+        output_file=None,
+        disable_tqdm=disable_tqdm,
+        disable_stream=disable_stream,
+        return_logprob=False,
+        return_routed_experts=False,
+        seed=seed,
+        disable_ignore_eos=disable_ignore_eos,
+        extra_request_body=None,
+        apply_chat_template=False,
+        profile=None,
+        lora_name=lora_name,
+        lora_request_distribution=lora_request_distribution,
+        lora_zipf_alpha=lora_zipf_alpha,
+        prompt_suffix="",
+        device=device,
+        pd_separated=pd_separated,
+    )
+
+
+def auto_config_device() -> str:
+    """Auto-config available device platform"""
+
+    try:
+        device = get_device()
+    except (RuntimeError, ImportError) as e:
+        print(f"Warning: {e} - Falling back to CPU")
+        device = "cpu"
+
+    return device
+
+
+def run_bench_serving(
+    num_prompts,
+    request_rate,
+    dataset_name="random",
+    dataset_path="",
+    tokenizer=None,
+    random_input_len=4096,
+    random_output_len=2048,
+    sharegpt_context_len=None,
+    disable_stream=False,
+    disable_ignore_eos=False,
+    need_warmup=False,
+    seed: int = 0,
+    device="auto",
+    background_task: Optional[Callable[[str, asyncio.Event], Awaitable[None]]] = None,
+    lora_name: Optional[str] = None,
+    disable_tqdm: bool = False,
+):
+    if device == "auto":
+        device = auto_config_device()
+    # Launch the server
+    base_url = DEFAULT_URL_FOR_TEST
+
+    # Run benchmark
+    args = get_benchmark_args(
+        base_url=base_url,
+        dataset_name=dataset_name,
+        dataset_path=dataset_path,
+        tokenizer=tokenizer,
+        num_prompts=num_prompts,
+        random_input_len=random_input_len,
+        random_output_len=random_output_len,
+        sharegpt_context_len=sharegpt_context_len,
+        request_rate=request_rate,
+        disable_stream=disable_stream,
+        disable_ignore_eos=disable_ignore_eos,
+        seed=seed,
+        device=device,
+        lora_name=lora_name,
+        disable_tqdm=disable_tqdm,
+    )
+
+    async def _run():
+        if need_warmup:
+            warmup_args = copy.deepcopy(args)
+            warmup_args.num_prompts = 16
+            await asyncio.to_thread(run_benchmark, warmup_args)
+
+        start_event = asyncio.Event()
+        stop_event = asyncio.Event()
+        task_handle = (
+            asyncio.create_task(background_task(base_url, start_event, stop_event))
+            if background_task
+            else None
+        )
+
+        try:
+            start_event.set()
+            result = await asyncio.to_thread(run_benchmark, args)
+        finally:
+            if task_handle:
+                stop_event.set()
+                await task_handle
+
+        return result
+
+    res = asyncio.run(_run())
+
+    assert res["completed"] == num_prompts
+    return res

@@ -19,7 +19,6 @@ python3 -m sglang.launch_server \
   --quantization modelopt_fp4 \
   --watchdog-timeout 10000 \
   --tp 4 \
-  --speculative-algorithm EAGLE \
   --speculative-num-steps 3 \
   --speculative-eagle-topk 1 \
   --speculative-num-draft-tokens 4 \
@@ -33,7 +32,13 @@ python3 -m sglang.launch_server \
   --max-running-requests 32 \
   --log-requests \
   --log-requests-level 0 \
-  --chunked-prefill-size 32768 \
-  --max-prefill-tokens 32768 \
-  --mem-fraction-static 0.86 \
-  --enable-inc-tokenizer
+  --chunked-prefill-size 131072 \
+  --mem-fraction-static 0.75 \
+  --enable-inc-tokenizer \
+  --enable-trtllm-mla-fp8-prefill \
+  --enable-mla-k-transform-kernel \
+  --hicache-ratio 3.0 \
+  --enable-hierarchical-cache \
+  --hicache-io-backend kernel \
+  --hicache-write-policy write_through \
+  --schedule-policy lpm

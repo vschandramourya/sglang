@@ -53,8 +53,12 @@ FOLDER_NAMES = [
     "python/sglang/multimodal_gen",
     "sgl-kernel",
     "test/manual",
+    "test/registered",
     "test/srt",
+    "test/unit",
+    "test/pytest.ini",
     "test/README.md",
+    "test/run_suite_nightly.py",
     "python/sglang/bench_one_batch.py",
     "python/sglang/bench_one_batch_server.py",
     "python/sglang/bench_serving.py",
@@ -63,6 +67,7 @@ FOLDER_NAMES = [
     "python/sglang/compile_deep_gemm.py",
     "python/sglang/global_config.py",
     "python/sglang/profiler.py",
+    ".pre-commit-config.yaml",
 ]
 
 folder_names_for_sgl_router = [

@@ -3,7 +3,7 @@ set -euo pipefail
 
 apt-get update
 apt-get install -y vim net-tools
-
+pip3 install mooncake-transfer-engine
 scripts_dir="${PD_SCRIPTS_DIR:-}"
 
 if [[ -z "$scripts_dir" ]]; then

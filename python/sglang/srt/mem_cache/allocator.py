@@ -26,7 +26,6 @@ import torch
 import triton
 import triton.language as tl
 
-from sglang.srt.mem_cache.memory_pool import SWAKVPool
 from sglang.srt.utils import get_bool_env_var, get_num_new_pages, next_power_of_2
 
 if TYPE_CHECKING:
@@ -172,132 +171,6 @@ class TokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         return self._kvcache.load_cpu_copy(kv_cache_cpu, indices)
 
 
-class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
-    """Allocator for SWA hybrid KV cache."""
-
-    def __init__(
-        self,
-        size: int,
-        size_swa: int,
-        dtype: torch.dtype,
-        device: str,
-        kvcache: SWAKVPool,
-        need_sort: bool,
-    ):
-        super().__init__(size, 1, dtype, device, kvcache, need_sort)
-        assert isinstance(kvcache, SWAKVPool)
-        self._size_full = size
-        self._size_swa = size_swa
-        self.full_attn_allocator = TokenToKVPoolAllocator(
-            size,
-            dtype,
-            device,
-            kvcache.full_kv_pool,
-            need_sort,
-        )
-        self.swa_attn_allocator = TokenToKVPoolAllocator(
-            size_swa,
-            dtype,
-            device,
-            kvcache.swa_kv_pool,
-            need_sort,
-        )
-        self.full_to_swa_index_mapping = torch.empty(
-            size + size_swa + 1,
-            dtype=torch.int64,
-            device=device,
-        )
-        self.clear()
-
-        self._kvcache.full_to_swa_index_mapping = self.full_to_swa_index_mapping
-
-    def available_size(self):
-        raise NotImplementedError()
-
-    def full_available_size(self):
-        return self.full_attn_allocator.available_size()
-
-    def swa_available_size(self):
-        return self.swa_attn_allocator.available_size()
-
-    @property
-    def size_full(self):
-        return self._size_full
-
-    @property
-    def size_swa(self):
-        return self._size_swa
-
-    def debug_print(self) -> str:
-        msg = ""
-        msg += f"#swa-available-size: {self.swa_attn_allocator.available_size()}, "
-        msg += (
-            f"#full-attn-available-size: {self.full_attn_allocator.available_size()}, "
-        )
-        return msg
-
-    def get_kvcache(self):
-        return self._kvcache
-
-    def translate_loc_from_full_to_swa(self, kv_indices: torch.Tensor):
-        assert self.full_to_swa_index_mapping is not None
-        return self.full_to_swa_index_mapping[kv_indices].to(torch.int32)
-
-    def alloc(self, need_size: int):
-        if need_size > self.full_attn_allocator.available_size():
-            return None
-        if need_size > self.swa_attn_allocator.available_size():
-            return None
-
-        alloc_full_indices = self.full_attn_allocator.alloc(need_size)
-        alloc_swa_indices = self.swa_attn_allocator.alloc(need_size)
-        self.full_to_swa_index_mapping[alloc_full_indices] = alloc_swa_indices
-        return alloc_full_indices
-
-    def free(self, free_index: torch.Tensor):
-        if free_index.numel() == 0:
-            return
-        if self.is_not_in_free_group:
-            self.full_attn_allocator.free(free_index)
-            self.free_swa(free_index)
-        else:
-            self.free_group.append(free_index)
-        assert (
-            self.full_attn_allocator.available_size() <= self.full_attn_allocator.size
-        )
-        assert self.swa_attn_allocator.available_size() <= self.swa_attn_allocator.size
-
-    def free_swa(self, free_index: torch.Tensor):
-        swa_indices = self.full_to_swa_index_mapping[free_index]
-        swa_indices = swa_indices[swa_indices > 0]
-        self.swa_attn_allocator.free(swa_indices)
-        self.full_to_swa_index_mapping[free_index] = 0
-
-    def backup_state(self):
-        return [
-            self.full_attn_allocator.backup_state(),
-            self.swa_attn_allocator.backup_state(),
-        ]
-
-    def restore_state(self, state):
-        assert len(state) == 2
-        self.full_attn_allocator.restore_state(state[0])
-        self.swa_attn_allocator.restore_state(state[1])
-
-    def clear(self):
-        self.swa_attn_allocator.clear()
-        self.full_attn_allocator.clear()
-        self.full_to_swa_index_mapping.fill_(0)
-        self.is_not_in_free_group = True
-        self.free_group = []
-
-    def get_cpu_copy(self, indices):
-        return self._kvcache.get_cpu_copy(indices)
-
-    def load_cpu_copy(self, kv_cache_cpu, indices):
-        return self._kvcache.load_cpu_copy(kv_cache_cpu, indices)
-
-
 @triton.jit
 def alloc_extend_kernel(
     pre_lens_ptr,
@@ -307,7 +180,7 @@ def alloc_extend_kernel(
     out_indices,
     bs_upper: tl.constexpr,
     page_size: tl.constexpr,
-    max_num_extend_tokens: tl.constexpr,
+    max_num_extend_tokens,
 ):
     pid = tl.program_id(0)
 
@@ -353,16 +226,27 @@ def alloc_extend_kernel(
         - (pre_len + page_size - 1) // page_size * page_size
     )
 
-    offset_many_page = tl.arange(0, max_num_extend_tokens)
-    page_start = tl.load(
-        free_page_ptr + new_page_start_loc + offset_many_page // page_size,
-        mask=offset_many_page < num_part2,
-    )
-    tl.store(
-        out_indices + output_start_loc + num_part1 + offset_many_page,
-        page_start * page_size + offset_many_page % page_size,
-        mask=offset_many_page < num_part2,
-    )
+    # Process in chunks using fixed chunk size to avoid large arrays
+    CHUNK_SIZE: tl.constexpr = 8192  # Fixed chunk size
+    num_chunks = tl.cdiv(max_num_extend_tokens, CHUNK_SIZE)
+    
+    for chunk_idx in range(num_chunks):
+        chunk_start = chunk_idx * CHUNK_SIZE
+        chunk_end = tl.minimum(chunk_start + CHUNK_SIZE, max_num_extend_tokens)
+        
+        offset_chunk = tl.arange(0, CHUNK_SIZE) + chunk_start
+        mask_chunk = offset_chunk < num_part2
+        
+        page_start = tl.load(
+            free_page_ptr + new_page_start_loc + offset_chunk // page_size,
+            mask=mask_chunk,
+        )
+        tl.store(
+            out_indices + output_start_loc + num_part1 + offset_chunk,
+            page_start * page_size + offset_chunk % page_size,
+            mask=mask_chunk,
+        )
+    
     if pre_len + num_part1 + num_part2 == seq_len:
         return
 
@@ -498,7 +382,7 @@ class PagedTokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
             out_indices,
             next_power_of_2(bs),
             self.page_size,
-            self.seen_max_num_extend_tokens_next_power_of_2,
+            self.seen_max_num_extend_tokens_next_power_of_2,  # Now passed as runtime value, not constexpr
         )
 
         if self.debug_mode:
