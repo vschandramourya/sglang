@@ -1,12 +1,18 @@
 #!/bin/bash
 
-HOST=${1:-"10.168.9.69:12345"}
+PREFILL_HOST="10.168.9.72:12349"
 
-curl -X POST http://${HOST}/start_profile \
+OUTPUT_DIR="/scratch/msrinivasa/sim"
+
+echo "Starting profile on Prefill Worker ($PREFILL_HOST)..."
+curl -X POST http://${PREFILL_HOST}/start_profile \
   -H "Content-Type: application/json" \
   -d '{
-    "output_dir": "/scratch/ywang/sim",
+    "output_dir": "'"$OUTPUT_DIR"'",
     "num_steps": 5,
     "start_step": 2,
     "activities": ["GPU", "CPU"]
   }'
+echo ""
+
+echo "Profiling initiated on prefill worker."
