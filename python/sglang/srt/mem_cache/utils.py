@@ -14,6 +14,7 @@
 """Common utilities."""
 
 from typing import Any, List, Optional, Tuple
+from itertools import islice
 
 import torch
 import triton
@@ -271,4 +272,5 @@ def convert_to_bigram_key(tokens: List[int]) -> List[Tuple[int, int]]:
         return tokens
     if len(tokens) < 2:
         return []
-    return [(tokens[i], tokens[i + 1]) for i in range(len(tokens) - 1)]
+    # Optimization: Use zip + islice to avoid Python loop overhead and list slicing copy
+    return list(zip(tokens, islice(tokens, 1, None)))

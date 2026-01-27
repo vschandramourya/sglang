@@ -446,8 +446,16 @@ class RadixCache(BasePrefixCache):
             req.req_pool_idx, : len(token_ids)
         ]
 
-        # Maybe convert to bigram keys for EAGLE
-        keys = convert_to_bigram_key(req.fill_ids) if self.is_eagle else req.fill_ids
+        # Use bigram keys for EAGLE (always up-to-date via update_fill_ids)
+        if self.is_eagle:
+            # Optimization: use precomputed key if it matches the current sequence length
+            if getattr(req, "bigram_key", None) is not None and len(req.bigram_key) == len(token_ids) - 1:
+                keys = req.bigram_key
+            else:
+                keys = convert_to_bigram_key(token_ids)
+        else:
+            keys = token_ids
+
         keys = self._page_align_keys(keys)
         values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
         radix_key = RadixKey(keys, req.extra_key, is_bigram=self.is_eagle)
@@ -482,8 +490,16 @@ class RadixCache(BasePrefixCache):
             req.req_pool_idx, : len(token_ids)
         ]
 
-        # Maybe convert to bigram keys for EAGLE
-        keys = convert_to_bigram_key(req.fill_ids) if self.is_eagle else req.fill_ids
+        # Use bigram keys for EAGLE (always up-to-date via update_fill_ids)
+        if self.is_eagle:
+            # Optimization: use precomputed key if it matches the current sequence length
+            if getattr(req, "bigram_key", None) is not None and len(req.bigram_key) == len(token_ids) - 1:
+                keys = req.bigram_key
+            else:
+                keys = convert_to_bigram_key(token_ids)
+        else:
+            keys = token_ids
+
         keys = self._page_align_keys(keys)
         values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
         radix_key = RadixKey(keys, req.extra_key, is_bigram=self.is_eagle)

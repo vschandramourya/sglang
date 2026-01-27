@@ -59,6 +59,7 @@ from sglang.srt.disaggregation.utils import (
     TransferBackend,
     prepare_abort,
 )
+from sglang.srt.mem_cache.utils import convert_to_bigram_key
 from sglang.srt.distributed import get_pp_group, get_world_group
 from sglang.srt.dllm.config import DllmConfig
 from sglang.srt.environ import envs
@@ -1432,6 +1433,10 @@ class Scheduler(
                 # Use default bootstrap port
                 recv_req.bootstrap_port = self.server_args.disaggregation_bootstrap_port
 
+            bigram_key = None
+            if self.server_args.speculative_algorithm.is_eagle():
+                bigram_key = convert_to_bigram_key(recv_req.input_ids)
+
             req = Req(
                 recv_req.rid,
                 recv_req.input_text,
@@ -1460,6 +1465,7 @@ class Scheduler(
                 ),
                 http_worker_ipc=recv_req.http_worker_ipc,
                 dllm_config=self.dllm_config,
+                bigram_key=bigram_key,
             )
             req.tokenizer = self.tokenizer
 
@@ -1504,6 +1510,10 @@ class Scheduler(
                 req.origin_input_ids, image_inputs
             )
             req.extend_image_inputs(image_inputs)
+
+            # Update bigram_key if it exists (i.e., EAGLE is enabled)
+            if req.bigram_key is not None:
+                req.bigram_key = convert_to_bigram_key(req.origin_input_ids)
 
             if len(req.origin_input_ids) >= self.max_req_input_len:
                 req.set_finish_with_abort(
@@ -2196,6 +2206,12 @@ class Scheduler(
 
         # Run forward
         if self.is_generation:
+
+            if batch.forward_mode == ForwardMode.EXTEND and self.spec_algorithm.is_eagle():
+                for req in batch.reqs:
+                    if req.bigram_key is None:
+                        req.bigram_key = convert_to_bigram_key(req.origin_input_ids)
+
             if self.spec_algorithm.is_none() or self.enable_overlap:
                 # In most cases, we use the model worker batch to run the forward.
                 worker_batch_or_batch = batch.get_model_worker_batch()

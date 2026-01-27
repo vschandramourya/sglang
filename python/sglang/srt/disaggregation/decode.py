@@ -689,7 +689,7 @@ class DecodePreallocQueue:
         self.req_to_token_pool.write((req.req_pool_idx, slice(0, len(kv_loc))), kv_loc)
 
         # populate metadata
-        req.fill_ids = req.origin_input_ids + req.output_ids
+        req.update_fill_ids(req.origin_input_ids + req.output_ids)
         req.set_extend_input_len(len(req.fill_ids))
 
         return kv_loc

@@ -455,7 +455,10 @@ class PrefillAdder:
             _rem_tokens = self.rem_chunk_tokens
         truncated = req.extend_input_len > _rem_tokens
         req.set_extend_input_len(min(req.extend_input_len, _rem_tokens))
-        req.fill_ids = req.fill_ids[: len(req.prefix_indices) + req.extend_input_len]
+
+        new_fill_ids = req.fill_ids[: len(req.prefix_indices) + req.extend_input_len]
+        req.update_fill_ids(new_fill_ids)
+        
         self.can_run_list.append(req)
         self._update_prefill_budget(
             0,
@@ -560,7 +563,8 @@ class PrefillAdder:
             trunc_len = self.rem_chunk_tokens
 
             req.set_extend_input_len(trunc_len)
-            req.fill_ids = req.fill_ids[:trunc_len]
+            # Update fill_ids and bigram_key atomically (critical for EAGLE spec performance)
+            req.update_fill_ids(req.fill_ids[:trunc_len])
             self.can_run_list.append(req)
             self.new_chunked_req = req
             self._update_prefill_budget(0, trunc_len, 0)
@@ -652,7 +656,9 @@ class PrefillAdder:
 
                 # Chunked prefill
                 req.set_extend_input_len(trunc_len)
-                req.fill_ids = req.fill_ids[: len(req.prefix_indices) + trunc_len]
+                # Update fill_ids and bigram_key atomically (critical for EAGLE spec performance)
+                new_fill_ids = req.fill_ids[: len(req.prefix_indices) + trunc_len]
+                req.update_fill_ids(new_fill_ids)
 
                 self.can_run_list.append(req)
                 self.new_chunked_req = req
