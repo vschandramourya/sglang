@@ -1416,7 +1416,7 @@ class Scheduler(
                 recv_req.bootstrap_port = self.server_args.disaggregation_bootstrap_port
 
             bigram_key = None
-            if self.server_args.speculative_algorithm.is_eagle():
+            if self.spec_algorithm.is_eagle():
                 bigram_key = convert_to_bigram_key(recv_req.input_ids)
 
             req = Req(
