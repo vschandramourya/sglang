@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST="http://10.173.2.69:8000"
+HOST="http://10.173.2.72:8091"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
