@@ -20,11 +20,11 @@ def get_hash_str(token_ids: List[int], prior_hash: str = None) -> str:
 
     for t in token_ids:
         if isinstance(t, tuple):
-            # EAGLE bigram mode: hash both elements to uniquely identify the bigram
+            # Legacy tuple support (deprecated): hash both elements
             for elem in t:
                 hasher.update(elem.to_bytes(4, byteorder="little", signed=False))
         else:
-            # Regular mode: single integer token
+            # Standard mode: single integer token (used for both EAGLE and non-EAGLE)
             hasher.update(t.to_bytes(4, byteorder="little", signed=False))
 
     return hasher.hexdigest()

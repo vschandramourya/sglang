@@ -14,7 +14,6 @@
 """Common utilities."""
 
 from typing import Any, List, Optional, Tuple
-from itertools import islice
 
 import torch
 import triton
@@ -265,12 +264,63 @@ def maybe_init_custom_mem_pool(
         return False, None, None
 
 
-def convert_to_bigram_key(tokens: List[int]) -> List[Tuple[int, int]]:
-    # EAGLE uses bigram keys in the radix tree since draft sequence is the one-token-shifted version of target
-    # [1, 2, 3, 4] -> [(1,2), (2,3), (3,4)]
-    if len(tokens) and isinstance(tokens[0], tuple):
-        return tokens
-    if len(tokens) < 2:
-        return []
-    # Optimization: Use zip + islice to avoid Python loop overhead and list slicing copy
-    return list(zip(tokens, islice(tokens, 1, None)))
+# EAGLE Sentinel-based offset helpers
+# These enable unigram keys with a sentinel at position 0 to handle the one-token shift
+
+# Sentinel value: empty tensor indicating "no KV exists for first token position"
+# This is used because EAGLE's draft model processes shifted input [t_1, ..., t_n]
+# instead of [t_0, ..., t_n], producing N-1 KV entries for N tokens.
+EAGLE_SENTINEL_VALUE = -1  # Special marker value for sentinel positions
+
+
+def eagle_create_sentinel_tensor(device: torch.device) -> torch.Tensor:
+    """Create a sentinel tensor for EAGLE's first-position offset.
+    
+    The sentinel marks "no EAGLE KV exists" because the first token was shifted out
+    of the draft model's input.
+    """
+    return torch.tensor([EAGLE_SENTINEL_VALUE], dtype=torch.int64, device=device)
+
+
+def eagle_prepend_sentinel(values: torch.Tensor) -> torch.Tensor:
+    """Prepend sentinel for EAGLE's first-position offset.
+    
+    For N tokens, EAGLE produces N-1 KV entries. This function prepends
+    a sentinel value to create N total values for N keys.
+    
+    Args:
+        values: KV indices tensor of length N-1
+        
+    Returns:
+        Tensor of length N with sentinel at position 0
+    """
+    if values.numel() == 0:
+        return eagle_create_sentinel_tensor(values.device)
+    sentinel = torch.tensor([EAGLE_SENTINEL_VALUE], dtype=values.dtype, device=values.device)
+    return torch.cat([sentinel, values])
+
+
+def eagle_filter_sentinels(values: torch.Tensor) -> torch.Tensor:
+    """Filter out sentinel values from match result.
+    
+    After matching in the radix tree, this removes sentinel markers to return
+    only the actual KV indices.
+    
+    Args:
+        values: Tensor potentially containing sentinel values
+        
+    Returns:
+        Tensor with sentinels removed
+    """
+    if values.numel() == 0:
+        return values
+    # Filter out sentinel values
+    mask = values != EAGLE_SENTINEL_VALUE
+    return values[mask]
+
+
+def eagle_has_sentinel(values: torch.Tensor) -> bool:
+    """Check if a tensor contains sentinel values."""
+    if values.numel() == 0:
+        return False
+    return (values == EAGLE_SENTINEL_VALUE).any().item()

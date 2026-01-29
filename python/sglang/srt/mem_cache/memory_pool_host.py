@@ -251,6 +251,14 @@ class HostKVCache(abc.ABC):
             need_size % self.page_size == 0
         ), "The requested size should be a multiple of the page size."
         if need_size > self.available_size():
+            # #region agent log H1
+            import json, time as _t
+            _log_path = "/home/msrinivasa/tgl/.cursor/debug.log"
+            _payload = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"memory_pool_host.py:alloc","message":"host_alloc_rejected","data":{"requested":need_size,"available":self.available_size(),"total_size":self.size,"page_size":self.page_size},"timestamp":int(_t.time()*1000)}
+            try:
+                with open(_log_path, "a") as _f: _f.write(json.dumps(_payload) + "\n")
+            except: pass
+            # #endregion
             return None
 
         select_index = self.free_slots[:need_size]

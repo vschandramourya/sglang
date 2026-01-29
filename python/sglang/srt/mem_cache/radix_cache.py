@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from sglang.srt.mem_cache.cache_init_params import CacheInitParams
-from sglang.srt.mem_cache.utils import convert_to_bigram_key
+from sglang.srt.mem_cache.utils import (
+    eagle_filter_sentinels,
+    eagle_prepend_sentinel,
+    EAGLE_SENTINEL_VALUE,
+)
 
 """
 Copyright 2023-2024 SGLang Team
@@ -60,14 +64,11 @@ class RadixKey:
         self,
         token_ids: List[int],
         extra_key: Optional[str] = None,
-        is_bigram: bool = False,
     ):
         # token ids sequence
         self.token_ids = token_ids
         # extra key (e.g. lora_id, cache_salt)
         self.extra_key = extra_key
-        # is bigram key
-        self.is_bigram = is_bigram
 
     def __len__(self) -> int:
         return len(self.token_ids)
@@ -336,14 +337,25 @@ class RadixCache(BasePrefixCache):
         self.protected_size_ = 0
         self._record_all_cleared_event()
 
-    def maybe_bigram_convert(
+    def maybe_eagle_convert(
         self, key: RadixKey, value: Optional[torch.Tensor] = None
     ) -> Tuple[RadixKey, Optional[torch.Tensor]]:
-        if self.is_eagle and not key.is_bigram:
-            key.token_ids = convert_to_bigram_key(key.token_ids)
-            if value is not None:
-                value = value[: len(key)]
-
+        """Convert key/value for EAGLE mode using sentinel-based offset.
+        
+        For EAGLE, we use unigram keys with a sentinel value at position 0.
+        This replaces the old bigram approach while maintaining the same
+        length alignment (N keys with N values, where first value is sentinel).
+        
+        The sentinel marks "no EAGLE KV exists for first token" because the
+        draft model processes shifted input [t_1, ..., t_n] instead of [t_0, ..., t_n].
+        """
+        if self.is_eagle:
+            # Keep unigram keys (no conversion needed for keys)
+            # For values, prepend sentinel to align N-1 KV indices with N keys
+            if value is not None and len(key) > 0:
+                # value has N-1 actual KV indices for N tokens
+                # Prepend sentinel to make N values for N keys
+                value = eagle_prepend_sentinel(value[: len(key) - 1])
         return key, value
 
     def match_prefix(self, key: RadixKey, **kwargs) -> MatchResult:
@@ -384,7 +396,8 @@ class RadixCache(BasePrefixCache):
                 to expose a precise boundary; this structural refinement improves
                 subsequent match efficiency and does not duplicate data.
         """
-        key, _ = self.maybe_bigram_convert(key)
+        # For EAGLE, keys remain as unigrams (no conversion needed for lookup)
+        # The tree stores unigram keys with sentinel-prepended values
 
         def empty_match_result():
             return MatchResult(
@@ -410,6 +423,9 @@ class RadixCache(BasePrefixCache):
         value, last_node = self._match_prefix_helper(self.root_node, key)
         if value:
             value = torch.cat(value)
+            # For EAGLE, filter out sentinel values to return only actual KV indices
+            if self.is_eagle:
+                value = eagle_filter_sentinels(value)
         else:
             value = torch.empty((0,), dtype=torch.int64, device=self.device)
         return MatchResult(
@@ -425,7 +441,7 @@ class RadixCache(BasePrefixCache):
         if value is None:
             value = torch.tensor(key.token_ids, dtype=torch.int64)
 
-        key, value = self.maybe_bigram_convert(key, value)
+        key, value = self.maybe_eagle_convert(key, value)
 
         return self._insert_helper(self.root_node, key, value, priority)
 
@@ -455,35 +471,54 @@ class RadixCache(BasePrefixCache):
             req.req_pool_idx, : len(token_ids)
         ]
 
-        # Use bigram keys for EAGLE (always up-to-date via update_fill_ids)
-        if self.is_eagle:
-            # Optimization: use precomputed key if it matches the current sequence length
-            if getattr(req, "bigram_key", None) is not None and len(req.bigram_key) == len(token_ids) - 1:
-                keys = req.bigram_key
-            else:
-                keys = convert_to_bigram_key(token_ids)
-        else:
-            keys = token_ids
-
+        # For EAGLE: use unigram keys with sentinel-based offset
+        # For non-EAGLE: use unigram keys directly
+        keys = token_ids
         keys = self._page_align_keys(keys)
-        values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
-        radix_key = RadixKey(keys, req.extra_key, is_bigram=self.is_eagle)
+        
+        if self.is_eagle:
+            # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
+            # The insert method will prepend sentinel to align N-1 values with N keys
+            actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
+            values = kv_indices[:actual_kv_len].to(dtype=torch.int64, copy=True)
+        else:
+            values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
+        
+        radix_key = RadixKey(keys, req.extra_key)
 
         # Radix Cache takes one ref in memory pool
         if is_insert:
             priority = getattr(req, "priority", 0) or 0
             new_prefix_len = self.insert(radix_key, values, priority=priority)
             # Free the duplicates that were already in the tree
-            self.token_to_kv_pool_allocator.free(
-                kv_indices[req.cache_protected_len : new_prefix_len]
-            )
+            # For EAGLE, new_prefix_len is in terms of keys (N), but protected_len is KV-based
+            if self.is_eagle:
+                # new_prefix_len is key-based; convert to KV-based for freeing
+                new_kv_prefix_len = max(0, new_prefix_len - 1) if new_prefix_len > 0 else 0
+                self.token_to_kv_pool_allocator.free(
+                    kv_indices[req.cache_protected_len : new_kv_prefix_len]
+                )
+            else:
+                self.token_to_kv_pool_allocator.free(
+                    kv_indices[req.cache_protected_len : new_prefix_len]
+                )
         else:
-            self.token_to_kv_pool_allocator.free(
-                kv_indices[req.cache_protected_len : len(keys)]
-            )
+            if self.is_eagle:
+                actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
+                self.token_to_kv_pool_allocator.free(
+                    kv_indices[req.cache_protected_len : actual_kv_len]
+                )
+            else:
+                self.token_to_kv_pool_allocator.free(
+                    kv_indices[req.cache_protected_len : len(keys)]
+                )
 
         # free the unaligned tail
-        self.token_to_kv_pool_allocator.free(kv_indices[len(keys) :])
+        if self.is_eagle:
+            actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
+            self.token_to_kv_pool_allocator.free(kv_indices[actual_kv_len:])
+        else:
+            self.token_to_kv_pool_allocator.free(kv_indices[len(keys) :])
 
         # Remove req slot release the cache lock
         self.req_to_token_pool.free(req.req_pool_idx)
@@ -499,19 +534,20 @@ class RadixCache(BasePrefixCache):
             req.req_pool_idx, : len(token_ids)
         ]
 
-        # Use bigram keys for EAGLE (always up-to-date via update_fill_ids)
-        if self.is_eagle:
-            # Optimization: use precomputed key if it matches the current sequence length
-            if getattr(req, "bigram_key", None) is not None and len(req.bigram_key) == len(token_ids) - 1:
-                keys = req.bigram_key
-            else:
-                keys = convert_to_bigram_key(token_ids)
-        else:
-            keys = token_ids
-
+        # For EAGLE: use unigram keys with sentinel-based offset
+        # For non-EAGLE: use unigram keys directly
+        keys = token_ids
         keys = self._page_align_keys(keys)
-        values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
-        radix_key = RadixKey(keys, req.extra_key, is_bigram=self.is_eagle)
+        
+        if self.is_eagle:
+            # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
+            # The insert method will prepend sentinel to align N-1 values with N keys
+            actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
+            values = kv_indices[:actual_kv_len].to(dtype=torch.int64, copy=True)
+        else:
+            values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
+        
+        radix_key = RadixKey(keys, req.extra_key)
 
         # Radix Cache takes one ref in memory pool
         new_prefix_len = self.insert(
@@ -521,9 +557,16 @@ class RadixCache(BasePrefixCache):
             priority=getattr(req, "priority", 0) or 0,
         )
 
-        self.token_to_kv_pool_allocator.free(
-            kv_indices[req.cache_protected_len : new_prefix_len]
-        )
+        # For EAGLE, new_prefix_len is key-based; convert to KV-based for freeing
+        if self.is_eagle:
+            new_kv_prefix_len = max(0, new_prefix_len - 1) if new_prefix_len > 0 else 0
+            self.token_to_kv_pool_allocator.free(
+                kv_indices[req.cache_protected_len : new_kv_prefix_len]
+            )
+        else:
+            self.token_to_kv_pool_allocator.free(
+                kv_indices[req.cache_protected_len : new_prefix_len]
+            )
 
         # The prefix indices could be updated, reuse it
         match_result = self.match_prefix(radix_key)
@@ -531,7 +574,13 @@ class RadixCache(BasePrefixCache):
             match_result.device_indices,
             match_result.last_device_node,
         )
-        assert len(new_indices) == len(keys), f"{len(new_indices)=}, {len(keys)=}"
+        
+        # For EAGLE, new_indices has sentinels filtered out, so length is N-1 for N keys
+        if self.is_eagle:
+            expected_len = len(keys) - 1 if len(keys) > 0 else 0
+            assert len(new_indices) == expected_len, f"{len(new_indices)=}, {expected_len=}"
+        else:
+            assert len(new_indices) == len(keys), f"{len(new_indices)=}, {len(keys)=}"
 
         self.req_to_token_pool.write(
             (req.req_pool_idx, slice(req.cache_protected_len, len(new_indices))),
@@ -549,7 +598,7 @@ class RadixCache(BasePrefixCache):
 
         # `req.prefix_indices` will be used in `PrefillAdder::add_chunked_req` later
         # - page_size != 1: there is a partial page at the end, keep the full kv_indices
-        # - eagle case: bigram keys will only cache len - 1 kv indices
+        # - eagle case: sentinel-based keys will only cache len - 1 kv indices
         if len(new_indices) < len(kv_indices):
             req.prefix_indices = torch.cat(
                 [new_indices, kv_indices[len(new_indices) :]]
@@ -581,8 +630,15 @@ class RadixCache(BasePrefixCache):
         while num_evicted < num_tokens and len(eviction_heap):
             _priority, x = heapq.heappop(eviction_heap)
 
-            self.token_to_kv_pool_allocator.free(x.value)
-            num_evicted += len(x.value)
+            # For EAGLE, filter out sentinel values before freeing
+            if self.is_eagle:
+                actual_values = eagle_filter_sentinels(x.value)
+                if actual_values.numel() > 0:
+                    self.token_to_kv_pool_allocator.free(actual_values)
+                num_evicted += len(actual_values)
+            else:
+                self.token_to_kv_pool_allocator.free(x.value)
+                num_evicted += len(x.value)
             self._delete_leaf(x)
 
             if len(x.parent.children) == 0 and x.parent.lock_ref == 0:
@@ -637,10 +693,18 @@ class RadixCache(BasePrefixCache):
 
         def _dfs_helper(node: TreeNode):
             for _, child in node.children.items():
-                values.append(child.value)
+                if self.is_eagle:
+                    # Filter out sentinel values for EAGLE
+                    filtered = eagle_filter_sentinels(child.value)
+                    if filtered.numel() > 0:
+                        values.append(filtered)
+                else:
+                    values.append(child.value)
                 _dfs_helper(child)
 
         _dfs_helper(self.root_node)
+        if not values:
+            return torch.empty(0, dtype=torch.int64, device=self.device)
         return torch.cat(values)
 
     ##### Internal Helper Functions #####
@@ -765,7 +829,12 @@ class RadixCache(BasePrefixCache):
         stack = [self.root_node]
         while stack:
             current_node = stack.pop()
-            total_size += len(current_node.value)
+            if self.is_eagle:
+                # For EAGLE, count only actual KV values (excluding sentinels)
+                filtered = eagle_filter_sentinels(current_node.value) if current_node.value is not None and len(current_node.value) > 0 else current_node.value
+                total_size += len(filtered) if filtered is not None else 0
+            else:
+                total_size += len(current_node.value)
             for child in current_node.children.values():
                 if child.evicted:
                     continue

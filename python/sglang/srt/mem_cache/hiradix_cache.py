@@ -23,6 +23,11 @@ from sglang.srt.mem_cache.radix_cache import (
     compute_node_hash_values,
     split_node_hash_value,
 )
+from sglang.srt.mem_cache.utils import (
+    eagle_filter_sentinels,
+    eagle_prepend_sentinel,
+    EAGLE_SENTINEL_VALUE,
+)
 from sglang.srt.metrics.collector import StorageMetricsCollector
 
 if TYPE_CHECKING:
@@ -236,19 +241,47 @@ class HiRadixCache(RadixCache):
             return False
 
     def write_backup(self, node: TreeNode, write_back=False):
+        # #region agent log H1,H4,H5
+        import json, time as _t
+        _log_path = "/home/msrinivasa/tgl/.cursor/debug.log"
+        _host_avail = self.cache_controller.mem_pool_host.available_size() if hasattr(self.cache_controller, 'mem_pool_host') and self.cache_controller.mem_pool_host else -1
+        _payload = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H1,H4,H5","location":"hiradix_cache.py:write_backup","message":"write_backup_entry","data":{"node_id":node.id,"is_eagle":self.is_eagle,"host_pool_available":_host_avail,"node_value_len":len(node.value) if node.value is not None else 0},"timestamp":int(_t.time()*1000)}
+        try:
+            with open(_log_path, "a") as _f: _f.write(json.dumps(_payload) + "\n")
+        except: pass
+        # #endregion
+        # For EAGLE, filter out sentinel values before writing to host
+        device_values = node.value
+        if self.is_eagle:
+            device_values = eagle_filter_sentinels(node.value)
+            # #region agent log H2,H3
+            _payload2 = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H2,H3","location":"hiradix_cache.py:write_backup","message":"eagle_filter_result","data":{"original_len":len(node.value) if node.value is not None else 0,"filtered_len":len(device_values),"has_sentinel":int((node.value == -1).any().item()) if node.value is not None and len(node.value) > 0 else 0},"timestamp":int(_t.time()*1000)}
+            try:
+                with open(_log_path, "a") as _f: _f.write(json.dumps(_payload2) + "\n")
+            except: pass
+            # #endregion
+            if device_values.numel() == 0:
+                return 0
+        
         logger.debug(
             f"[HiRadixCache] write_backup START: node_id={node.id}, "
-            f"value_len={len(node.value) if node.value is not None else 0}, write_back={write_back}"
+            f"value_len={len(device_values) if device_values is not None else 0}, write_back={write_back}"
         )
         host_indices = self.cache_controller.write(
-            device_indices=node.value,
+            device_indices=device_values,
             node_id=node.id,
         )
         if host_indices is None:
+            # #region agent log H1
+            _payload3 = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"hiradix_cache.py:write_backup","message":"host_alloc_failed_first_try","data":{"node_id":node.id,"requested_size":len(device_values),"host_pool_available":_host_avail},"timestamp":int(_t.time()*1000)}
+            try:
+                with open(_log_path, "a") as _f: _f.write(json.dumps(_payload3) + "\n")
+            except: pass
+            # #endregion
             logger.warning(f"[HiRadixCache] write_backup: host alloc failed for node_id={node.id}, evicting...")
-            self.evict_host(len(node.value))
+            self.evict_host(len(device_values))
             host_indices = self.cache_controller.write(
-                device_indices=node.value,
+                device_indices=device_values,
                 node_id=node.id,
             )
         if host_indices is not None:
@@ -262,6 +295,13 @@ class HiRadixCache(RadixCache):
                 f"[HiRadixCache] write_backup SUCCESS: node_id={node.id}, host_indices_len={len(host_indices)}"
             )
         else:
+            # #region agent log H1
+            _host_avail_after = self.cache_controller.mem_pool_host.available_size() if hasattr(self.cache_controller, 'mem_pool_host') and self.cache_controller.mem_pool_host else -1
+            _payload4 = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"hiradix_cache.py:write_backup","message":"host_alloc_failed_after_evict","data":{"node_id":node.id,"requested_size":len(device_values),"host_pool_available_after_evict":_host_avail_after},"timestamp":int(_t.time()*1000)}
+            try:
+                with open(_log_path, "a") as _f: _f.write(json.dumps(_payload4) + "\n")
+            except: pass
+            # #endregion
             logger.error(f"[HiRadixCache] write_backup FAILED: node_id={node.id}, could not allocate host memory")
             return 0
 
@@ -405,16 +445,31 @@ class HiRadixCache(RadixCache):
 
     def _evict_backuped(self, node: TreeNode):
         # evict a node already written to host
-        num_evicted = self.cache_controller.evict_device(node.value)
-        assert num_evicted > 0
-        self.evictable_size_ -= num_evicted
+        # For EAGLE, filter out sentinel values before evicting
+        if self.is_eagle:
+            actual_values = eagle_filter_sentinels(node.value)
+            if actual_values.numel() > 0:
+                num_evicted = self.cache_controller.evict_device(actual_values)
+            else:
+                num_evicted = 0
+        else:
+            num_evicted = self.cache_controller.evict_device(node.value)
+        if num_evicted > 0:
+            self.evictable_size_ -= num_evicted
         node.value = None
         return num_evicted
 
     def _evict_regular(self, node: TreeNode):
         # evict a node not initiated write to host
-        self.cache_controller.mem_pool_device_allocator.free(node.value)
-        num_evicted = len(node.value)
+        # For EAGLE, filter out sentinel values before freeing
+        if self.is_eagle:
+            actual_values = eagle_filter_sentinels(node.value)
+            if actual_values.numel() > 0:
+                self.cache_controller.mem_pool_device_allocator.free(actual_values)
+            num_evicted = len(actual_values)
+        else:
+            self.cache_controller.mem_pool_device_allocator.free(node.value)
+            num_evicted = len(node.value)
         self._delete_leaf(node)
         return num_evicted
 
@@ -753,7 +808,7 @@ class HiRadixCache(RadixCache):
 
     def match_prefix(self, key: RadixKey, **kwargs):
         empty_value = torch.empty((0,), dtype=torch.int64, device=self.device)
-        key, _ = self.maybe_bigram_convert(key)
+        # For EAGLE, keys remain as unigrams (no conversion needed for lookup)
         if self.disable or len(key) == 0:
             return MatchResult(
                 device_indices=empty_value,
@@ -769,6 +824,9 @@ class HiRadixCache(RadixCache):
         value, last_node = self._match_prefix_helper(self.root_node, key)
         if value:
             value = torch.cat(value)
+            # For EAGLE, filter out sentinel values to return only actual KV indices
+            if self.is_eagle:
+                value = eagle_filter_sentinels(value)
         else:
             value = empty_value
 
@@ -945,14 +1003,14 @@ class HiRadixCache(RadixCache):
     ):
         if priority is None:
             priority = 0
-        key, value = self.maybe_bigram_convert(key, value)
 
         if len(key) == 0:
             return 0
 
         if self.is_eagle and value is not None:
-            # Make sure the value len equal to the EAGLE bigram key len
-            value = value[: len(key)]
+            # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
+            # Prepend sentinel to align N-1 values with N keys
+            value = eagle_prepend_sentinel(value[: len(key) - 1])
 
         node = self.root_node
         child_key = self.get_child_key_fn(key)

@@ -55,7 +55,6 @@ from sglang.srt.disaggregation.utils import (
     TransferBackend,
     prepare_abort,
 )
-from sglang.srt.mem_cache.utils import convert_to_bigram_key
 from sglang.srt.distributed import get_pp_group, get_world_group
 from sglang.srt.distributed.parallel_state import get_tp_group
 from sglang.srt.dllm.config import DllmConfig
@@ -163,7 +162,6 @@ from sglang.srt.managers.utils import GenerationBatchResult, validate_input_leng
 from sglang.srt.mem_cache.cache_init_params import CacheInitParams
 from sglang.srt.mem_cache.common import release_kv_cache
 from sglang.srt.mem_cache.radix_cache import RadixCache
-from sglang.srt.mem_cache.utils import convert_to_bigram_key
 from sglang.srt.model_executor.forward_batch_info import ForwardMode, PPProxyTensors
 from sglang.srt.multiplex.multiplexing_mixin import SchedulerMultiplexMixin
 from sglang.srt.parser.reasoning_parser import ReasoningParser
@@ -1415,10 +1413,6 @@ class Scheduler(
                 # Use default bootstrap port
                 recv_req.bootstrap_port = self.server_args.disaggregation_bootstrap_port
 
-            bigram_key = None
-            if self.spec_algorithm.is_eagle():
-                bigram_key = convert_to_bigram_key(recv_req.input_ids)
-
             req = Req(
                 recv_req.rid,
                 recv_req.input_text,
@@ -1448,7 +1442,6 @@ class Scheduler(
                 routing_key=recv_req.routing_key,
                 http_worker_ipc=recv_req.http_worker_ipc,
                 dllm_config=self.dllm_config,
-                bigram_key=bigram_key,
             )
             req.tokenizer = self.tokenizer
 
@@ -1493,10 +1486,6 @@ class Scheduler(
                 req.origin_input_ids, image_inputs
             )
             req.extend_image_inputs(image_inputs)
-
-            # Update bigram_key if it exists (i.e., EAGLE is enabled)
-            if req.bigram_key is not None:
-                req.bigram_key = convert_to_bigram_key(req.origin_input_ids)
 
             if len(req.origin_input_ids) >= self.max_req_input_len:
                 req.set_finish_with_abort(
@@ -1585,12 +1574,8 @@ class Scheduler(
                 # This enables cross-worker L3 cache sharing
                 logger.info(f"[_prefetch_kvcache] Taking L3-FIRST path (matched_len=0)")
                 
-                # Convert to bigram keys for EAGLE mode (must match cache insert format)
-                if self.tree_cache.is_eagle:
-                    tokens_for_l3 = convert_to_bigram_key(new_input_tokens)
-                    logger.info(f"[_prefetch_kvcache] EAGLE bigram conversion: input_len={len(new_input_tokens)}, output_len={len(tokens_for_l3)}")
-                else:
-                    tokens_for_l3 = new_input_tokens
+                # With sentinel-based design, both EAGLE and non-EAGLE use unigram keys
+                tokens_for_l3 = new_input_tokens
                 
                 # Debug: log L3-First query details
                 first_page_tokens = list(zip(tokens_for_l3[:10], tokens_for_l3[1:11])) if len(tokens_for_l3) > 1 else []
@@ -2212,11 +2197,6 @@ class Scheduler(
 
         # Run forward
         if self.is_generation:
-
-            if batch.forward_mode == ForwardMode.EXTEND and self.spec_algorithm.is_eagle():
-                for req in batch.reqs:
-                    if req.bigram_key is None:
-                        req.bigram_key = convert_to_bigram_key(req.origin_input_ids)
 
             if self.spec_algorithm.is_none() or self.enable_overlap:
                 # In most cases, we use the model worker batch to run the forward.

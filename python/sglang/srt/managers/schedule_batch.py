@@ -81,7 +81,6 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardMode,
 )
 
-from sglang.srt.mem_cache.utils import convert_to_bigram_key
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.server_args import ServerArgs, get_global_server_args
@@ -526,7 +525,6 @@ class Req:
         routing_key: Optional[str] = None,
         dimensions: Optional[int] = None,
         http_worker_ipc: Optional[str] = None,
-        bigram_key: Optional[List[Tuple[int, int]]] = None,
     ):
         # Input and output info
         self.rid = rid
@@ -562,9 +560,6 @@ class Req:
 
         # For multi-http worker
         self.http_worker_ipc = http_worker_ipc
-
-        # For EAGLE speculative decoding
-        self.bigram_key = bigram_key
 
         # Require reasoning for the request (hybrid reasoning model only)
         self.require_reasoning = require_reasoning
@@ -783,22 +778,12 @@ class Req:
 
     def update_fill_ids(self, new_fill_ids: List[int]) -> None:
         """
-        Update fill_ids and auto-recompute bigram_key if EAGLE is enabled.
-
-        This ensures bigram_key stays synchronized with fill_ids changes,
-        avoiding expensive recomputation on the critical path in cache_unfinished_req.
-
-        CRITICAL: Always use this method instead of directly assigning to fill_ids
-        when EAGLE speculative decoding is enabled.
+        Update fill_ids.
 
         Args:
             new_fill_ids: New token sequence for fill_ids
         """
         self.fill_ids = new_fill_ids
-
-        # Recompute bigram_key if EAGLE is enabled (indicated by non-None bigram_key)
-        if self.bigram_key is not None:
-            self.bigram_key = convert_to_bigram_key(new_fill_ids)
 
     @property
     def seqlen(self) -> int:

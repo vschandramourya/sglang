@@ -37,7 +37,11 @@ from sglang.srt.mem_cache.radix_cache import (
     get_child_key,
 )
 from sglang.srt.mem_cache.swa_memory_pool import SWATokenToKVPoolAllocator
-from sglang.srt.mem_cache.utils import convert_to_bigram_key
+from sglang.srt.mem_cache.utils import (
+    eagle_filter_sentinels,
+    eagle_prepend_sentinel,
+    EAGLE_SENTINEL_VALUE,
+)
 
 if TYPE_CHECKING:
     from sglang.srt.managers.schedule_batch import Req
@@ -349,10 +353,9 @@ class SWARadixCache(BasePrefixCache):
             self.key_match_fn = partial(_key_match_paged, page_size=self.page_size)
             self.get_child_key_fn = partial(get_child_key, page_size=self.page_size)
 
-        if self.is_eagle:
-            self.key_convert_fn = convert_to_bigram_key
-        else:
-            self.key_convert_fn = lambda key: key
+        # With sentinel-based design, we use unigram keys for both EAGLE and non-EAGLE
+        # The one-token offset for EAGLE is handled via sentinel values in the value tensor
+        self.key_convert_fn = lambda key: key
 
         if params.enable_metrics:
             self.init_metrics_collector()
@@ -407,6 +410,9 @@ class SWARadixCache(BasePrefixCache):
         value, last_node = self._match_prefix_helper(key)
         if value:
             value = torch.cat(value)
+            # For EAGLE, filter out sentinel values to return only actual KV indices
+            if self.is_eagle:
+                value = eagle_filter_sentinels(value)
         else:
             value = torch.empty((0,), dtype=torch.int64, device=self.device)
         return MatchResult(
@@ -424,9 +430,10 @@ class SWARadixCache(BasePrefixCache):
         if value is None:
             value = torch.tensor([x for x in key.token_ids], dtype=torch.int64)
 
-        if self.is_eagle:
-            # Make sure the value len equal to the EAGLE bigram key len
-            value = value[: len(key)]
+        if self.is_eagle and len(key) > 0:
+            # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
+            # Prepend sentinel to align N-1 values with N keys
+            value = eagle_prepend_sentinel(value[: len(key) - 1])
 
         return self._insert_helper(self.root_node, key, value, prev_prefix_len)
 
@@ -442,31 +449,32 @@ class SWARadixCache(BasePrefixCache):
             return
 
         token_ids = (req.origin_input_ids + req.output_ids)[:kv_committed_len]
-        # For EAGLE radix cache, we will convert the key to bigram key, e.g. [1,2,3,4] -> [(1,2), (2,3), (3,4)], the length will -1. ((len([(1,2), (2,3), (3,4)]) = len([1,2,3,4]) - 1))
-        # So for the corresponding kv length should also -1. Then we get the actual_kv_len, and use it to do later calculation and slicing.
+        # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
+        # The sentinel pattern handles the offset, so we use actual KV length for operations
         actual_kv_len = kv_committed_len - 1 if self.is_eagle else kv_committed_len
         kv_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx, :kv_committed_len
         ]
 
         if self.page_size != 1:
-            page_aligned_len = actual_kv_len // self.page_size * self.page_size
-            page_aligned_kv_indices = kv_indices[:page_aligned_len].to(
+            # For EAGLE with page_size > 1, we page-align the actual KV length
+            page_aligned_kv_len = actual_kv_len // self.page_size * self.page_size
+            page_aligned_kv_indices = kv_indices[:page_aligned_kv_len].to(
                 dtype=torch.int64, copy=True
             )
+            # Page-aligned token length is KV length + 1 for EAGLE (to account for sentinel)
+            page_aligned_token_len = page_aligned_kv_len + 1 if self.is_eagle else page_aligned_kv_len
         else:
-            page_aligned_len = actual_kv_len
-            page_aligned_kv_indices = kv_indices.to(dtype=torch.int64, copy=True)
+            page_aligned_kv_len = actual_kv_len
+            page_aligned_kv_indices = kv_indices[:actual_kv_len].to(dtype=torch.int64, copy=True)
             if self.is_eagle:
-                self.token_to_kv_pool_allocator.free(kv_indices[page_aligned_len:])
-
-        page_aligned_token_len = (
-            page_aligned_len + 1 if self.is_eagle else page_aligned_len
-        )
+                # Free the trailing KV that doesn't fit (the N-th position has no EAGLE KV)
+                self.token_to_kv_pool_allocator.free(kv_indices[actual_kv_len:])
+            page_aligned_token_len = page_aligned_kv_len + 1 if self.is_eagle else page_aligned_kv_len
 
         old_prefix_len = len(req.prefix_indices)
         if self.is_eagle and old_prefix_len > req.cache_protected_len:
-            # In EAGLE chunked prefill case, the prefix_indices included one unmatched token (kv_indices[actual_kv_len:])
+            # In EAGLE chunked prefill case, the prefix_indices included one unmatched token
             # Here we -1 to make sure the kv of the unmatched token can be freed correctly to avoid memory leak
             old_prefix_len -= 1
 
@@ -481,12 +489,12 @@ class SWARadixCache(BasePrefixCache):
             )
         else:
             self.token_to_kv_pool_allocator.free(
-                kv_indices[old_prefix_len:page_aligned_len]
+                kv_indices[old_prefix_len:page_aligned_kv_len]
             )
 
         # free the unaligned tail
         if not self.is_eagle:
-            self.token_to_kv_pool_allocator.free(kv_indices[page_aligned_len:])
+            self.token_to_kv_pool_allocator.free(kv_indices[page_aligned_kv_len:])
 
         # Remove req slot release the cache lock
         self.req_to_token_pool.free(req.req_pool_idx)
@@ -505,31 +513,31 @@ class SWARadixCache(BasePrefixCache):
 
         token_ids = req.fill_ids
         all_token_len = len(token_ids)
-        # For EAGLE radix cache, we will convert the key to bigram key, e.g. [1,2,3,4] -> [(1,2), (2,3), (3,4)], the length will -1. ((len([(1,2), (2,3), (3,4)]) = len([1,2,3,4]) - 1))
-        # So for the corresponding kv length should also -1. Then we get the actual_kv_len, and use it to do later calculation and slicing.
+        # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
+        # The sentinel pattern handles the offset, so we use actual KV length for operations
         actual_kv_len = all_token_len - 1 if self.is_eagle else all_token_len
         kv_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx, :all_token_len
         ]
 
         if self.page_size != 1:
-            page_aligned_len = actual_kv_len // self.page_size * self.page_size
-            page_aligned_kv_indices = kv_indices[:page_aligned_len].to(
+            page_aligned_kv_len = actual_kv_len // self.page_size * self.page_size
+            page_aligned_kv_indices = kv_indices[:page_aligned_kv_len].to(
                 dtype=torch.int64, copy=True
             )
         else:
-            page_aligned_len = actual_kv_len
-            page_aligned_kv_indices = kv_indices.to(dtype=torch.int64, copy=True)
+            page_aligned_kv_len = actual_kv_len
+            page_aligned_kv_indices = kv_indices[:actual_kv_len].to(dtype=torch.int64, copy=True)
 
-        # For EAGLE, the page_aligned_len is for the bigram key, the normal key len should +1
+        # Page-aligned token length is KV length + 1 for EAGLE (to account for sentinel)
         page_aligned_token_len = (
-            page_aligned_len + 1 if self.is_eagle else page_aligned_len
+            page_aligned_kv_len + 1 if self.is_eagle else page_aligned_kv_len
         )
         page_aligned_token_ids = token_ids[:page_aligned_token_len]
 
         old_prefix_len = len(req.prefix_indices)
         if self.is_eagle and old_prefix_len > req.cache_protected_len:
-            # In EAGLE chunked prefill case, the prefix_indices included one unmatched token (kv_indices[actual_kv_len:])
+            # In EAGLE chunked prefill case, the prefix_indices included one unmatched token
             # Here we -1 to make sure the kv of the unmatched token can be freed correctly to avoid memory leak
             old_prefix_len -= 1
 
@@ -605,9 +613,17 @@ class SWARadixCache(BasePrefixCache):
                 assert x.full_lock_ref == 0, f"node is in use, {x.id=}"
 
                 # 1. free node kv indices, evict full and swa tokens
-                self.token_to_kv_pool_allocator.free(x.value)
-                full_num_evicted += len(x.value)
-                swa_num_evicted += len(x.value)
+                # For EAGLE, filter out sentinel values before freeing
+                if self.is_eagle:
+                    actual_values = eagle_filter_sentinels(x.value)
+                    if actual_values.numel() > 0:
+                        self.token_to_kv_pool_allocator.free(actual_values)
+                    full_num_evicted += len(actual_values)
+                    swa_num_evicted += len(actual_values)
+                else:
+                    self.token_to_kv_pool_allocator.free(x.value)
+                    full_num_evicted += len(x.value)
+                    swa_num_evicted += len(x.value)
 
                 # 2. get the next leaf, update the lru lists
                 x_next = self.full_lru_list.get_prev_leaf_no_lock(x)
@@ -640,8 +656,15 @@ class SWARadixCache(BasePrefixCache):
 
                 if len(x.children) > 0:
                     # 1. an internal node, free swa tokens.
-                    self.token_to_kv_pool_allocator.free_swa(x.value)
-                    swa_num_evicted += len(x.value)
+                    # For EAGLE, filter out sentinel values before freeing
+                    if self.is_eagle:
+                        actual_values = eagle_filter_sentinels(x.value)
+                        if actual_values.numel() > 0:
+                            self.token_to_kv_pool_allocator.free_swa(actual_values)
+                        swa_num_evicted += len(actual_values)
+                    else:
+                        self.token_to_kv_pool_allocator.free_swa(x.value)
+                        swa_num_evicted += len(x.value)
 
                     # 2. get the next node, update the lru lists
                     x_next = self.swa_lru_list.get_prev_no_lock(x)
@@ -654,9 +677,17 @@ class SWARadixCache(BasePrefixCache):
                         x.full_lock_ref == 0
                     ), f"leaf node with full lock must also have swa lock, {x.id=}"
                     # 1. a leaf node, free full and swa tokens
-                    self.token_to_kv_pool_allocator.free(x.value)
-                    full_num_evicted += len(x.value)
-                    swa_num_evicted += len(x.value)
+                    # For EAGLE, filter out sentinel values before freeing
+                    if self.is_eagle:
+                        actual_values = eagle_filter_sentinels(x.value)
+                        if actual_values.numel() > 0:
+                            self.token_to_kv_pool_allocator.free(actual_values)
+                        full_num_evicted += len(actual_values)
+                        swa_num_evicted += len(actual_values)
+                    else:
+                        self.token_to_kv_pool_allocator.free(x.value)
+                        full_num_evicted += len(x.value)
+                        swa_num_evicted += len(x.value)
 
                     # 2. get the next node, update the lru lists
                     x_next = self.swa_lru_list.get_prev_no_lock(x)
@@ -790,10 +821,18 @@ class SWARadixCache(BasePrefixCache):
 
         def _dfs_helper(node: TreeNode):
             for _, child in node.children.items():
-                values.append(child.value)
+                if self.is_eagle:
+                    # Filter out sentinel values for EAGLE
+                    filtered = eagle_filter_sentinels(child.value)
+                    if filtered.numel() > 0:
+                        values.append(filtered)
+                else:
+                    values.append(child.value)
                 _dfs_helper(child)
 
         _dfs_helper(self.root_node)
+        if not values:
+            return torch.empty(0, dtype=torch.int64, device=self.device)
         return torch.cat(values)
 
     ##### Internal Helper Functions #####
@@ -986,8 +1025,15 @@ class SWARadixCache(BasePrefixCache):
                 node.parent.swa_lock_ref == 0
             ), f"tombstone swa_lock_ref should always be 0, {node.parent.full_lock_ref=}, {node.parent.swa_lock_ref=}, {node.parent.id=}"
             # delete tombstone node evicts full tokens
-            self.token_to_kv_pool_allocator.free(node.parent.value)
-            full_num_evicted += len(node.parent.value)
+            # For EAGLE, filter out sentinel values before freeing
+            if self.is_eagle:
+                actual_values = eagle_filter_sentinels(node.parent.value)
+                if actual_values.numel() > 0:
+                    self.token_to_kv_pool_allocator.free(actual_values)
+                full_num_evicted += len(actual_values)
+            else:
+                self.token_to_kv_pool_allocator.free(node.parent.value)
+                full_num_evicted += len(node.parent.value)
             self.full_lru_list.remove_node(node.parent)
             self._delete_tombstone_leaf(node.parent)
             node = node.parent
@@ -1083,9 +1129,15 @@ class SWARadixCache(BasePrefixCache):
         stack = [self.root_node]
         while stack:
             current_node = stack.pop()
-            total_size += len(current_node.value)
+            if self.is_eagle:
+                # For EAGLE, count only actual KV values (excluding sentinels)
+                filtered = eagle_filter_sentinels(current_node.value) if current_node.value is not None and len(current_node.value) > 0 else current_node.value
+                value_len = len(filtered) if filtered is not None else 0
+            else:
+                value_len = len(current_node.value)
+            total_size += value_len
             if not current_node.swa_tombstone:
-                total_swa_size += len(current_node.value)
+                total_swa_size += value_len
             for child in current_node.children.values():
                 if child.evicted:
                     continue
