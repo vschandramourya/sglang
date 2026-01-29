@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST="http://10.173.2.72:12349"
+HOST="http://10.173.2.72:8091"
 MAX_TOKENS=1
 
 while [[ $# -gt 0 ]]; do

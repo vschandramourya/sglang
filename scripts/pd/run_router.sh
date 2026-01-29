@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export HOST_IP=$(ifconfig ens10f0np0 | awk '/inet / {print $2}')
+export HOST_IP=$(ifconfig ens10f0np0.674 | awk '/inet / {print $2}')
 
 python3 -m sglang_router.launch_router \
   --pd-disaggregation \
