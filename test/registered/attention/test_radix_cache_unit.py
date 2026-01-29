@@ -648,5 +648,181 @@ class TestRadixCache(unittest.TestCase):
             self.assertEqual(len(node.hash_value), 1)
 
 
+class TestEagleSentinel(unittest.TestCase):
+    """Test cases for EAGLE sentinel-based offset pattern."""
+
+    def test_sentinel_helpers(self):
+        """Test sentinel helper functions."""
+        from sglang.srt.mem_cache.utils import (
+            EAGLE_SENTINEL_VALUE,
+            eagle_create_sentinel_tensor,
+            eagle_filter_sentinels,
+            eagle_has_sentinel,
+            eagle_prepend_sentinel,
+        )
+
+        # Test sentinel creation
+        sentinel = eagle_create_sentinel_tensor(torch.device("cpu"))
+        self.assertEqual(sentinel.item(), EAGLE_SENTINEL_VALUE)
+        self.assertEqual(sentinel.dtype, torch.int64)
+
+        # Test prepend sentinel
+        values = torch.tensor([10, 20, 30], dtype=torch.int64)
+        with_sentinel = eagle_prepend_sentinel(values)
+        self.assertEqual(len(with_sentinel), 4)
+        self.assertEqual(with_sentinel[0].item(), EAGLE_SENTINEL_VALUE)
+        torch.testing.assert_close(with_sentinel[1:], values)
+
+        # Test prepend sentinel to empty tensor
+        empty_values = torch.tensor([], dtype=torch.int64)
+        with_sentinel_empty = eagle_prepend_sentinel(empty_values)
+        self.assertEqual(len(with_sentinel_empty), 1)
+        self.assertEqual(with_sentinel_empty[0].item(), EAGLE_SENTINEL_VALUE)
+
+        # Test filter sentinels
+        filtered = eagle_filter_sentinels(with_sentinel)
+        self.assertEqual(len(filtered), 3)
+        torch.testing.assert_close(filtered, values)
+
+        # Test filter empty tensor
+        empty_filtered = eagle_filter_sentinels(empty_values)
+        self.assertEqual(len(empty_filtered), 0)
+
+        # Test has sentinel
+        self.assertTrue(eagle_has_sentinel(with_sentinel))
+        self.assertFalse(eagle_has_sentinel(values))
+        self.assertFalse(eagle_has_sentinel(empty_values))
+
+    def test_eagle_mode_basic(self):
+        """Test basic EAGLE mode operations with sentinel pattern."""
+        from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+
+        # Create EAGLE-enabled cache
+        params = CacheInitParams(
+            disable=False,
+            req_to_token_pool=None,
+            token_to_kv_pool_allocator=None,
+            page_size=1,
+            is_eagle=True,
+        )
+        cache = RadixCache(params)
+
+        # Insert with EAGLE mode: N tokens produce N-1 KV entries
+        # Token sequence [A, B, C, D] (4 tokens)
+        # KV indices [kv_B, kv_C, kv_D] (3 entries - for shifted input)
+        tokens = [1, 2, 3, 4]
+        kv_indices = torch.tensor([10, 20, 30], dtype=torch.int64)
+
+        # Insert: N keys with sentinel-prepended values
+        cache.insert(RadixKey(tokens), kv_indices)
+
+        # Verify total size reflects actual KV entries (not sentinels)
+        self.assertEqual(cache.total_size(), 3)  # 3 actual KV entries
+
+        # Match should return filtered values (no sentinels)
+        result = cache.match_prefix(RadixKey(tokens))
+        self.assertEqual(len(result.device_indices), 3)
+        torch.testing.assert_close(result.device_indices, kv_indices)
+
+    def test_eagle_mode_partial_match(self):
+        """Test partial prefix matching in EAGLE mode."""
+        from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+
+        params = CacheInitParams(
+            disable=False,
+            req_to_token_pool=None,
+            token_to_kv_pool_allocator=None,
+            page_size=1,
+            is_eagle=True,
+        )
+        cache = RadixCache(params)
+
+        # Insert [A, B, C, D] with KV [kv_B, kv_C, kv_D]
+        tokens = [1, 2, 3, 4]
+        kv_indices = torch.tensor([10, 20, 30], dtype=torch.int64)
+        cache.insert(RadixKey(tokens), kv_indices)
+
+        # Partial match: query [A, B, C] (3 tokens)
+        # Should return 2 KV entries (B has sentinel, C has kv_C)
+        result = cache.match_prefix(RadixKey([1, 2, 3]))
+        self.assertEqual(len(result.device_indices), 2)
+        torch.testing.assert_close(
+            result.device_indices, torch.tensor([10, 20], dtype=torch.int64)
+        )
+
+        # Query [A, B] (2 tokens) -> 1 KV entry
+        result = cache.match_prefix(RadixKey([1, 2]))
+        self.assertEqual(len(result.device_indices), 1)
+        torch.testing.assert_close(
+            result.device_indices, torch.tensor([10], dtype=torch.int64)
+        )
+
+        # Query [A] (1 token) -> 0 KV entries (only sentinel)
+        result = cache.match_prefix(RadixKey([1]))
+        self.assertEqual(len(result.device_indices), 0)
+
+    def test_eagle_mode_no_aliasing(self):
+        """Test that different contexts don't alias in EAGLE mode."""
+        from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+
+        params = CacheInitParams(
+            disable=False,
+            req_to_token_pool=None,
+            token_to_kv_pool_allocator=None,
+            page_size=1,
+            is_eagle=True,
+        )
+        cache = RadixCache(params)
+
+        # Insert [A, B, C] with KV [kv_B, kv_C]
+        cache.insert(
+            RadixKey([1, 2, 3]), torch.tensor([10, 20], dtype=torch.int64)
+        )
+
+        # Query [X, B, C] where X != A should NOT match
+        # because path-based matching requires full prefix agreement
+        result = cache.match_prefix(RadixKey([999, 2, 3]))
+        self.assertEqual(len(result.device_indices), 0)
+
+        # Query [A, B, D] where D != C should partially match [A, B]
+        result = cache.match_prefix(RadixKey([1, 2, 999]))
+        self.assertEqual(len(result.device_indices), 1)
+        torch.testing.assert_close(
+            result.device_indices, torch.tensor([10], dtype=torch.int64)
+        )
+
+    def test_eagle_mode_eviction(self):
+        """Test eviction in EAGLE mode doesn't try to free sentinels."""
+        from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+
+        mock_allocator = unittest.mock.Mock()
+        mock_allocator.device = torch.device("cpu")
+
+        params = CacheInitParams(
+            disable=False,
+            req_to_token_pool=None,
+            token_to_kv_pool_allocator=mock_allocator,
+            page_size=1,
+            is_eagle=True,
+        )
+        cache = RadixCache(params)
+
+        # Insert data
+        cache.insert(
+            RadixKey([1, 2, 3, 4]),
+            torch.tensor([10, 20, 30], dtype=torch.int64),
+        )
+
+        # Evict - should only free actual KV indices, not sentinel
+        cache.evict(3)
+
+        # Verify free was called with the actual KV values
+        mock_allocator.free.assert_called()
+        # The freed tensor should NOT contain sentinel values
+        freed_tensor = mock_allocator.free.call_args[0][0]
+        from sglang.srt.mem_cache.utils import EAGLE_SENTINEL_VALUE
+        self.assertFalse((freed_tensor == EAGLE_SENTINEL_VALUE).any().item())
+
+
 if __name__ == "__main__":
     unittest.main()
