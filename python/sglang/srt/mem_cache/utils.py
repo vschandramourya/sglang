@@ -267,26 +267,32 @@ def maybe_init_custom_mem_pool(
 # EAGLE Sentinel-based offset helpers
 # These enable unigram keys with a sentinel at position 0 to handle the one-token shift
 
-# Sentinel value: empty tensor indicating "no KV exists for first token position"
-# This is used because EAGLE's draft model processes shifted input [t_1, ..., t_n]
-# instead of [t_0, ..., t_n], producing N-1 KV entries for N tokens.
-EAGLE_SENTINEL_VALUE = -1  # Special marker value for sentinel positions
+EAGLE_SENTINEL_VALUE = -1  # Special marker value for sentinel positions with a dummy kv cache entry
+
+# Per-device and dtype cache for sentinel tensors to avoid repeated allocations
+_SENTINEL_CACHE: dict = {}
+
+
+def _get_cached_sentinel(device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Get or create a cached sentinel tensor for the given device and dtype."""
+    key = (device, dtype)
+    if key not in _SENTINEL_CACHE:
+        _SENTINEL_CACHE[key] = torch.tensor([EAGLE_SENTINEL_VALUE], dtype=dtype, device=device) # dummy kv cache entry
+    return _SENTINEL_CACHE[key]
 
 
 def eagle_create_sentinel_tensor(device: torch.device) -> torch.Tensor:
     """Create a sentinel tensor for EAGLE's first-position offset.
-    
-    The sentinel marks "no EAGLE KV exists" because the first token was shifted out
-    of the draft model's input.
+
     """
-    return torch.tensor([EAGLE_SENTINEL_VALUE], dtype=torch.int64, device=device)
+    return _get_cached_sentinel(device, torch.int64)
 
 
 def eagle_prepend_sentinel(values: torch.Tensor) -> torch.Tensor:
     """Prepend sentinel for EAGLE's first-position offset.
     
     For N tokens, EAGLE produces N-1 KV entries. This function prepends
-    a sentinel value to create N total values for N keys.
+    a sentinel value to create N total values for N keys (Just like in Non-EAGLE mode)
     
     Args:
         values: KV indices tensor of length N-1
@@ -295,8 +301,8 @@ def eagle_prepend_sentinel(values: torch.Tensor) -> torch.Tensor:
         Tensor of length N with sentinel at position 0
     """
     if values.numel() == 0:
-        return eagle_create_sentinel_tensor(values.device)
-    sentinel = torch.tensor([EAGLE_SENTINEL_VALUE], dtype=values.dtype, device=values.device)
+        return _get_cached_sentinel(values.device, torch.int64)
+    sentinel = _get_cached_sentinel(values.device, values.dtype)
     return torch.cat([sentinel, values])
 
 
@@ -314,9 +320,10 @@ def eagle_filter_sentinels(values: torch.Tensor) -> torch.Tensor:
     """
     if values.numel() == 0:
         return values
-    # Filter out sentinel values
-    mask = values != EAGLE_SENTINEL_VALUE
-    return values[mask]
+
+    if values[0].item() == EAGLE_SENTINEL_VALUE:
+        return values[1:]
+    return values
 
 
 def eagle_has_sentinel(values: torch.Tensor) -> bool:

@@ -181,11 +181,14 @@ def _key_match_paged(key0: RadixKey, key1: RadixKey, page_size: int):
 
     i = 0
     while i < min_len:
-        if key0.token_ids[i : i + page_size] != key1.token_ids[i : i + page_size]:
+        # When at the boundary, only compare up to min_len tokens
+        # This ensures proper matching when one key is shorter than page_size
+        compare_end = min(i + page_size, min_len)
+        if key0.token_ids[i:compare_end] != key1.token_ids[i:compare_end]:
             break
         i += page_size
 
-    return i
+    return min(i, min_len)
 
 
 def get_child_key(key: RadixKey, page_size: int = 1):
@@ -337,25 +340,33 @@ class RadixCache(BasePrefixCache):
         self.protected_size_ = 0
         self._record_all_cleared_event()
 
+    def _get_value_count(self, value: torch.Tensor) -> int:
+        """Get the count of values for memory tracking.
+        
+        With the real dummy approach:
+        - EAGLE and non-EAGLE both use N indices for N keys
+        - Position 0 in EAGLE is a real allocated dummy (never accessed)
+        - All indices are real allocations, so len(value) = allocated slots
+        
+        This maintains the exact invariant:
+            max_total = available + evictable + protected
+        
+        Args:
+            value: The value tensor from a TreeNode
+            
+        Returns:
+            len(value) - the actual count of allocated slots
+        """
+        if value is None or (hasattr(value, 'numel') and value.numel() == 0):
+            return 0
+        if not hasattr(value, '__len__') or len(value) == 0:
+            return 0
+        return len(value)
+
     def maybe_eagle_convert(
         self, key: RadixKey, value: Optional[torch.Tensor] = None
     ) -> Tuple[RadixKey, Optional[torch.Tensor]]:
-        """Convert key/value for EAGLE mode using sentinel-based offset.
-        
-        For EAGLE, we use unigram keys with a sentinel value at position 0.
-        This replaces the old bigram approach while maintaining the same
-        length alignment (N keys with N values, where first value is sentinel).
-        
-        The sentinel marks "no EAGLE KV exists for first token" because the
-        draft model processes shifted input [t_1, ..., t_n] instead of [t_0, ..., t_n].
-        """
-        if self.is_eagle:
-            # Keep unigram keys (no conversion needed for keys)
-            # For values, prepend sentinel to align N-1 KV indices with N keys
-            if value is not None and len(key) > 0:
-                # value has N-1 actual KV indices for N tokens
-                # Prepend sentinel to make N values for N keys
-                value = eagle_prepend_sentinel(value[: len(key) - 1])
+        """Convert key/value for EAGLE mode."""
         return key, value
 
     def match_prefix(self, key: RadixKey, **kwargs) -> MatchResult:
@@ -423,9 +434,6 @@ class RadixCache(BasePrefixCache):
         value, last_node = self._match_prefix_helper(self.root_node, key)
         if value:
             value = torch.cat(value)
-            # For EAGLE, filter out sentinel values to return only actual KV indices
-            if self.is_eagle:
-                value = eagle_filter_sentinels(value)
         else:
             value = torch.empty((0,), dtype=torch.int64, device=self.device)
         return MatchResult(
@@ -476,13 +484,9 @@ class RadixCache(BasePrefixCache):
         keys = token_ids
         keys = self._page_align_keys(keys)
         
-        if self.is_eagle:
-            # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
-            # The insert method will prepend sentinel to align N-1 values with N keys
-            actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
-            values = kv_indices[:actual_kv_len].to(dtype=torch.int64, copy=True)
-        else:
-            values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
+        # For EAGLE with "real dummy" approach: use ALL N indices (position 0 is dummy)
+        # This aligns with target model's N-to-N mapping
+        values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
         
         radix_key = RadixKey(keys, req.extra_key)
 
@@ -491,34 +495,17 @@ class RadixCache(BasePrefixCache):
             priority = getattr(req, "priority", 0) or 0
             new_prefix_len = self.insert(radix_key, values, priority=priority)
             # Free the duplicates that were already in the tree
-            # For EAGLE, new_prefix_len is in terms of keys (N), but protected_len is KV-based
-            if self.is_eagle:
-                # new_prefix_len is key-based; convert to KV-based for freeing
-                new_kv_prefix_len = max(0, new_prefix_len - 1) if new_prefix_len > 0 else 0
-                self.token_to_kv_pool_allocator.free(
-                    kv_indices[req.cache_protected_len : new_kv_prefix_len]
-                )
-            else:
-                self.token_to_kv_pool_allocator.free(
-                    kv_indices[req.cache_protected_len : new_prefix_len]
-                )
+            self.token_to_kv_pool_allocator.free(
+                kv_indices[req.cache_protected_len : new_prefix_len]
+            )
         else:
-            if self.is_eagle:
-                actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
-                self.token_to_kv_pool_allocator.free(
-                    kv_indices[req.cache_protected_len : actual_kv_len]
-                )
-            else:
-                self.token_to_kv_pool_allocator.free(
-                    kv_indices[req.cache_protected_len : len(keys)]
-                )
+            self.token_to_kv_pool_allocator.free(
+                kv_indices[req.cache_protected_len : len(keys)]
+            )
 
-        # free the unaligned tail
-        if self.is_eagle:
-            actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
-            self.token_to_kv_pool_allocator.free(kv_indices[actual_kv_len:])
-        else:
-            self.token_to_kv_pool_allocator.free(kv_indices[len(keys) :])
+        # free the unaligned tail (indices beyond what was cached)
+        # With real dummy approach, both EAGLE and non-EAGLE cache len(keys) indices
+        self.token_to_kv_pool_allocator.free(kv_indices[len(keys) :])
 
         # Remove req slot release the cache lock
         self.req_to_token_pool.free(req.req_pool_idx)
@@ -539,13 +526,9 @@ class RadixCache(BasePrefixCache):
         keys = token_ids
         keys = self._page_align_keys(keys)
         
-        if self.is_eagle:
-            # For EAGLE: N tokens produce N-1 KV entries (due to one-token shift)
-            # The insert method will prepend sentinel to align N-1 values with N keys
-            actual_kv_len = len(keys) - 1 if len(keys) > 0 else 0
-            values = kv_indices[:actual_kv_len].to(dtype=torch.int64, copy=True)
-        else:
-            values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
+        # For EAGLE with "real dummy" approach: use ALL N indices (position 0 is dummy)
+        # This aligns with target model's N-to-N mapping
+        values = kv_indices[: len(keys)].to(dtype=torch.int64, copy=True)
         
         radix_key = RadixKey(keys, req.extra_key)
 
@@ -557,16 +540,11 @@ class RadixCache(BasePrefixCache):
             priority=getattr(req, "priority", 0) or 0,
         )
 
-        # For EAGLE, new_prefix_len is key-based; convert to KV-based for freeing
-        if self.is_eagle:
-            new_kv_prefix_len = max(0, new_prefix_len - 1) if new_prefix_len > 0 else 0
-            self.token_to_kv_pool_allocator.free(
-                kv_indices[req.cache_protected_len : new_kv_prefix_len]
-            )
-        else:
-            self.token_to_kv_pool_allocator.free(
-                kv_indices[req.cache_protected_len : new_prefix_len]
-            )
+        # Free duplicates that were already in the tree
+        # With real dummy approach, key length = value length for both EAGLE and non-EAGLE
+        self.token_to_kv_pool_allocator.free(
+            kv_indices[req.cache_protected_len : new_prefix_len]
+        )
 
         # The prefix indices could be updated, reuse it
         match_result = self.match_prefix(radix_key)
@@ -575,12 +553,8 @@ class RadixCache(BasePrefixCache):
             match_result.last_device_node,
         )
         
-        # For EAGLE, new_indices has sentinels filtered out, so length is N-1 for N keys
-        if self.is_eagle:
-            expected_len = len(keys) - 1 if len(keys) > 0 else 0
-            assert len(new_indices) == expected_len, f"{len(new_indices)=}, {expected_len=}"
-        else:
-            assert len(new_indices) == len(keys), f"{len(new_indices)=}, {len(keys)=}"
+        # With real dummy approach, length always equals keys for both EAGLE and non-EAGLE
+        assert len(new_indices) == len(keys), f"{len(new_indices)=}, {len(keys)=}"
 
         self.req_to_token_pool.write(
             (req.req_pool_idx, slice(req.cache_protected_len, len(new_indices))),
@@ -627,18 +601,31 @@ class RadixCache(BasePrefixCache):
         heapq.heapify(eviction_heap)
 
         num_evicted = 0
+        # Collect all indices to free in a batch to avoid duplicate page frees
+        # when nodes share page boundaries (e.g., parent/child on same page)
+        all_indices_to_free = []
+        nodes_to_delete = []
+        
         while num_evicted < num_tokens and len(eviction_heap):
             _priority, x = heapq.heappop(eviction_heap)
 
-            # For EAGLE, filter out sentinel values before freeing
-            if self.is_eagle:
-                actual_values = eagle_filter_sentinels(x.value)
-                if actual_values.numel() > 0:
-                    self.token_to_kv_pool_allocator.free(actual_values)
-                num_evicted += len(actual_values)
-            else:
-                self.token_to_kv_pool_allocator.free(x.value)
-                num_evicted += len(x.value)
+            # With real dummy approach, all indices are real allocations - no filtering needed
+            # This applies to both EAGLE and non-EAGLE
+            all_indices_to_free.append(x.value)
+            num_evicted += len(x.value)
+            
+            # Defer deletion until after batch free
+            nodes_to_delete.append(x)
+        
+        # Batch free all indices at once to deduplicate shared pages
+        combined_unique_pages = 0
+        if all_indices_to_free:
+            combined_indices = torch.cat(all_indices_to_free)
+            combined_unique_pages = len(torch.unique(combined_indices // self.page_size))
+            self.token_to_kv_pool_allocator.free(combined_indices)
+        
+        # Now delete all nodes and update eviction heap
+        for x in nodes_to_delete:
             self._delete_leaf(x)
 
             if len(x.parent.children) == 0 and x.parent.lock_ref == 0:
@@ -656,9 +643,10 @@ class RadixCache(BasePrefixCache):
         delta = 0
         while node != self.root_node:
             if node.lock_ref == 0:
-                self.evictable_size_ -= len(node.key)
-                self.protected_size_ += len(node.key)
-                delta -= len(node.key)
+                actual_kv_count = self._get_value_count(node.value)
+                self.evictable_size_ -= actual_kv_count
+                self.protected_size_ += actual_kv_count
+                delta -= actual_kv_count
             node.lock_ref += 1
             node = node.parent
         return delta
@@ -670,9 +658,10 @@ class RadixCache(BasePrefixCache):
         delta = 0
         while node != self.root_node:
             if node.lock_ref == 1:
-                self.evictable_size_ += len(node.key)
-                self.protected_size_ -= len(node.key)
-                delta += len(node.key)
+                actual_kv_count = self._get_value_count(node.value)
+                self.evictable_size_ += actual_kv_count
+                self.protected_size_ -= actual_kv_count
+                delta += actual_kv_count
             node.lock_ref -= 1
             if node.parent is None:
                 assert (
@@ -693,13 +682,7 @@ class RadixCache(BasePrefixCache):
 
         def _dfs_helper(node: TreeNode):
             for _, child in node.children.items():
-                if self.is_eagle:
-                    # Filter out sentinel values for EAGLE
-                    filtered = eagle_filter_sentinels(child.value)
-                    if filtered.numel() > 0:
-                        values.append(filtered)
-                else:
-                    values.append(child.value)
+                values.append(child.value)
                 _dfs_helper(child)
 
         _dfs_helper(self.root_node)
@@ -794,7 +777,9 @@ class RadixCache(BasePrefixCache):
             new_node.key = key
             new_node.value = value
             node.children[child_key] = new_node
-            self.evictable_size_ += len(key)
+            # Use page-equivalent count for memory accounting (matches allocator behavior)
+            actual_kv_count = self._get_value_count(value)
+            self.evictable_size_ += actual_kv_count
             # Hash will be computed lazily during event emission
             self._record_store_event(new_node)
         return total_prefix_length
@@ -822,7 +807,9 @@ class RadixCache(BasePrefixCache):
         v = node.parent.children.pop(key, None)
         assert v == node, f"parent does not have child key, {key}"
 
-        self.evictable_size_ -= len(node.key)
+        # Use sentinel-aware count for EAGLE memory accounting
+        subtract_amount = self._get_value_count(node.value)
+        self.evictable_size_ -= subtract_amount
 
     def _total_size_helper(self):
         total_size = 0
