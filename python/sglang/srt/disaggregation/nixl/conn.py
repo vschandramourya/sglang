@@ -323,16 +323,6 @@ class NixlKVManager(CommonKVManager):
         dst_gpu_id: int,
         notif: str,
     ):
-        # #region agent log H2
-        import json, time as _t
-        _log_path = "/home/msrinivasa/tgl/.cursor/debug.log"
-        _has_neg_src = int((prefill_kv_indices < 0).any()) if len(prefill_kv_indices) > 0 else 0
-        _has_neg_dst = int((dst_kv_indices < 0).any()) if len(dst_kv_indices) > 0 else 0
-        _payload = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H2","location":"nixl/conn.py:send_kvcache","message":"kv_indices_check","data":{"src_len":len(prefill_kv_indices),"dst_len":len(dst_kv_indices),"has_negative_src":_has_neg_src,"has_negative_dst":_has_neg_dst,"src_min":int(prefill_kv_indices.min()) if len(prefill_kv_indices)>0 else 0,"dst_min":int(dst_kv_indices.min()) if len(dst_kv_indices)>0 else 0},"timestamp":int(_t.time()*1000)}
-        try:
-            with open(_log_path, "a") as _f: _f.write(json.dumps(_payload) + "\n")
-        except: pass
-        # #endregion
         # group by indices
         prefill_kv_blocks, dst_kv_blocks = group_concurrent_contiguous(
             prefill_kv_indices, dst_kv_indices
@@ -830,14 +820,6 @@ class NixlKVReceiver(CommonKVReceiver):
         status = self.kv_mgr.check_status(self.bootstrap_room)
         if status in (KVPoll.Success, KVPoll.Failed):
             self.conclude_state = status
-            # #region agent log H1,H5
-            import json, time as _t
-            _log_path = "/home/msrinivasa/tgl/.cursor/debug.log"
-            _payload = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H1,H5","location":"nixl/conn.py:NixlKVReceiver.poll","message":"transfer_conclude","data":{"room":self.bootstrap_room,"status":str(status),"is_failed":status==KVPoll.Failed},"timestamp":int(_t.time()*1000)}
-            try:
-                with open(_log_path, "a") as _f: _f.write(json.dumps(_payload) + "\n")
-            except: pass
-            # #endregion
             return status
         if not self.started_transfer:
             return KVPoll.WaitingForInput  # type: ignore
@@ -846,14 +828,6 @@ class NixlKVReceiver(CommonKVReceiver):
         elapsed = now - self.init_time
 
         if elapsed >= self.kv_mgr.waiting_timeout:
-            # #region agent log H1
-            import json
-            _log_path = "/home/msrinivasa/tgl/.cursor/debug.log"
-            _payload = {"sessionId":"debug-session","runId":"run1","hypothesisId":"H1","location":"nixl/conn.py:NixlKVReceiver.poll","message":"waiting_timeout","data":{"room":self.bootstrap_room,"elapsed_sec":elapsed,"timeout_sec":self.kv_mgr.waiting_timeout},"timestamp":int(time.time()*1000)}
-            try:
-                with open(_log_path, "a") as _f: _f.write(json.dumps(_payload) + "\n")
-            except: pass
-            # #endregion
             logger.error(f"Request {self.bootstrap_room} waiting_timeout")
             self.kv_mgr.record_failure(
                 self.bootstrap_room,
