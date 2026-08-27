@@ -1074,7 +1074,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     def compute_spec_mrope_positions(
         self, model_runner: ModelRunner, batch: ScheduleBatch, seq_positions=None
     ):
-        # TODO support batched deltas
         batch_size = self.seq_lens.shape[0]
         device = model_runner.device
         mm_inputs = batch.multimodal_inputs
@@ -1090,15 +1089,41 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
                 (batch_size, 1), dtype=torch.int64, device=device
             )
         else:
-            mrope_deltas = [
-                (
-                    torch.zeros(1, dtype=torch.int64)
-                    if mm_inputs[i] is None
-                    else mm_inputs[i].mrope_position_delta.squeeze(0)
-                )
-                for i in range(batch_size)
-            ]
-            mrope_delta_tensor = torch.stack(mrope_deltas, dim=0).to(device=device)
+            # The per-request delta is a prefill-time constant, so the batched
+            # tensor only changes when the batch composition does. This runs on
+            # every draft/verify step: assembling it from per-request CPU
+            # tensors (stack + pageable H2D) was ~half the scheduler's wall
+            # time on mm-heavy batches. Key the cached device tensor by the
+            # delta values; non-scalar deltas keep the original assembly.
+            deltas = []
+            for mm_input in mm_inputs:
+                if mm_input is None:
+                    deltas.append(0)
+                elif mm_input.mrope_position_delta.numel() == 1:
+                    deltas.append(int(mm_input.mrope_position_delta))
+                else:
+                    deltas = None
+                    break
+            if deltas is None:
+                mrope_deltas = [
+                    (
+                        torch.zeros(1, dtype=torch.int64)
+                        if mm_inputs[i] is None
+                        else mm_inputs[i].mrope_position_delta.squeeze(0)
+                    )
+                    for i in range(batch_size)
+                ]
+                mrope_delta_tensor = torch.stack(mrope_deltas, dim=0).to(device=device)
+            else:
+                key = tuple(deltas)
+                cached = getattr(model_runner, "_spec_mrope_delta_cache", None)
+                if cached is not None and cached[0] == key:
+                    mrope_delta_tensor = cached[1]
+                else:
+                    mrope_delta_tensor = torch.tensor(
+                        deltas, dtype=torch.int64, device=device
+                    ).unsqueeze(1)
+                    model_runner._spec_mrope_delta_cache = (key, mrope_delta_tensor)
         next_input_positions = (
             (seq_positions + mrope_delta_tensor).flatten().unsqueeze(0).repeat(3, 1)
         )
