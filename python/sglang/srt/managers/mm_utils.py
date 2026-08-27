@@ -1388,6 +1388,12 @@ def wrap_shm_features(obj):
 
     if obj.mm_inputs:
         for item in obj.mm_inputs.mm_items:
+            # Hash here, on the tokenizer worker, so the scheduler's
+            # set_pad_value() early-outs instead of sha256-ing multi-MB
+            # features on the scheduling critical path (that stalls every
+            # in-flight decode for the duration).
+            if item.pad_value is None:
+                item.set_pad_value()
             item_hash = item.hash
             if item.feature is not None:
                 item.feature = _wrap_tensor_or_list(
